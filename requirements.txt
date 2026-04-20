@@ -1,0 +1,32 @@
+# CASB Automation Framework — Python Dependencies
+# Install: pip install -r requirements.txt
+
+# Browser automation
+playwright>=1.40.0
+
+# SSH client
+paramiko>=3.3.0
+
+# Windows UI automation (CASB popup detection)
+pywinauto>=0.6.8
+
+# Screenshot capture for CASB popup window
+Pillow>=10.0.0
+
+# App config loading
+pyyaml>=6.0.1
+
+# HTTP client (server upload)
+requests>=2.31.0
+
+# Results dashboard server
+flask>=2.3.0
+waitress>=3.0.0
+werkzeug>=2.3.0
+
+# TLS inspection verification
+cryptography>=41.0.0
+pyOpenSSL>=23.0.0
+
+# Environment variables (.env file support)
+python-dotenv>=1.0.0

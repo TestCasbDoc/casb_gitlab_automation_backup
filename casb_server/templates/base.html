@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>CASB Results — {% block title %}{% endblock %}</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', Arial, sans-serif;
+  background: #f0f2f5;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 220px;
+  min-height: 100vh;
+  background: #1a8fe3;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.sidebar-title {
+  background: #0d5fa3;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 18px 16px;
+  text-transform: uppercase;
+}
+
+.sidebar-section {
+  color: #d0eaff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 18px 16px 8px;
+}
+
+.sidebar a {
+  display: block;
+  color: #fff;
+  text-decoration: none;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-left: 3px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.sidebar a:hover, .sidebar a.active {
+  background: #0d5fa3;
+  border-left-color: #fff;
+}
+
+.sidebar-nav-btn {
+  display: block;
+  margin: 6px 12px;
+  padding: 9px 12px;
+  background: #fff;
+  color: #1a8fe3;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.sidebar-nav-btn:hover {
+  background: #e0f0ff;
+}
+
+/* ── Main ── */
+.main {
+  flex: 1;
+  padding: 28px 32px;
+  overflow-x: auto;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.page-header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1a2540;
+}
+
+.back-btn {
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.back-btn:hover { background: #f0f0f0; }
+
+/* ── Stat Cards ── */
+.stat-row {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.stat-card {
+  border-radius: 6px;
+  padding: 14px 24px;
+  min-width: 140px;
+  text-align: center;
+  color: #fff;
+}
+
+.stat-card .val {
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.stat-card .lbl {
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 4px;
+  letter-spacing: 0.5px;
+}
+
+.stat-pass  { background: #2e7d32; }
+.stat-fail  { background: #c62828; }
+.stat-total { background: #1565c0; }
+.stat-pct   { background: #e65100; }
+
+/* ── Table ── */
+.section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a2540;
+  margin: 20px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid #1a8fe3;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  font-size: 13px;
+}
+
+th {
+  background: #dbeeff;
+  color: #1a2540;
+  font-weight: 700;
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 2px solid #b3d4f0;
+  white-space: nowrap;
+}
+
+td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef2f7;
+  vertical-align: top;
+}
+
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #f5fbff; }
+
+/* ── Badges ── */
+.badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.badge-pass  { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+.badge-fail  { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
+.badge-warn  { background: #fff8e1; color: #e65100; border: 1px solid #ffcc80; }
+.badge-skip  { background: #f3f4f6; color: #555;    border: 1px solid #ccc; }
+.badge-yes   { background: #e8f5e9; color: #2e7d32; }
+.badge-no    { background: #ffebee; color: #c62828; }
+
+/* ── Action Buttons ── */
+.btn {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s;
+}
+
+.btn:hover { opacity: 0.85; }
+.btn-blue  { background: #1a8fe3; color: #fff; }
+.btn-green { background: #2e7d32; color: #fff; }
+.btn-red   { background: #c62828; color: #fff; }
+.btn-gray  { background: #607d8b; color: #fff; }
+.btn-outline { background: #fff; color: #1a8fe3; border: 1px solid #1a8fe3; }
+
+/* ── Misc ── */
+.run-id-mono {
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  color: #555;
+  white-space: nowrap;
+}
+
+.sig-id {
+  font-family: 'Consolas', monospace;
+  background: #e3f2fd;
+  color: #0d47a1;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  margin: 1px;
+  display: inline-block;
+}
+
+.fail-reason {
+  font-size: 11px;
+  color: #c62828;
+  margin-top: 3px;
+}
+
+.empty-state {
+  text-align: center;
+  color: #999;
+  padding: 40px;
+  font-size: 14px;
+}
+
+.file-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.file-list li a {
+  display: inline-block;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #1a8fe3;
+  text-decoration: none;
+  font-family: 'Consolas', monospace;
+}
+
+.file-list li a:hover { background: #e3f2fd; }
+
+/* ── Pin button ── */
+.btn-pin   { background: #6a1b9a; color: #fff; }
+.btn-unpin { background: #37474f; color: #fff; }
+.pinned-row td { background: #fdf6ff !important; }
+.pin-badge {
+  display: inline-block;
+  font-size: 10px; font-weight: 700; color: #6a1b9a;
+  background: #f3e5f5; border: 1px solid #ce93d8;
+  border-radius: 10px; padding: 1px 7px; margin-left: 6px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* ── Validation Modal ── */
+#val-modal-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9999;
+  align-items: center;
+  justify-content: center;
+}
+#val-modal-overlay.open { display: flex; }
+#val-modal {
+  background: #fff;
+  border-radius: 8px;
+  padding: 28px 32px;
+  min-width: 340px;
+  max-width: 420px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+#val-modal h2 { font-size: 16px; font-weight: 700; color: #1a2540; margin-bottom: 6px; }
+#val-modal p  { font-size: 13px; color: #555; margin-bottom: 16px; }
+#val-modal input {
+  width: 100%; padding: 9px 12px;
+  border: 1.5px solid #b3d4f0; border-radius: 5px;
+  font-size: 14px; margin-bottom: 8px; outline: none;
+  transition: border-color 0.15s;
+}
+#val-modal input:focus { border-color: #1a8fe3; }
+#val-modal input.error { border-color: #c62828; }
+#val-modal-error { font-size: 12px; color: #c62828; min-height: 18px; margin-bottom: 10px; }
+#val-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+</style>
+{% block extra_head %}{% endblock %}
+</head>
+<body>
+
+<script>
+var _valCallback = null;
+var _valExpected = null;
+
+function valModalOpen(title, desc, expectedUser, confirmLabel, confirmCls, callback) {
+  _valCallback = callback;
+  _valExpected = expectedUser.toLowerCase();
+  document.getElementById('val-modal-title').textContent = title;
+  document.getElementById('val-modal-desc').textContent = desc;
+  document.getElementById('val-modal-error').textContent = '';
+  document.getElementById('val-modal-input').value = '';
+  document.getElementById('val-modal-input').className = '';
+  var btn = document.getElementById('val-modal-confirm-btn');
+  btn.textContent = confirmLabel;
+  btn.className = 'btn ' + confirmCls;
+  document.getElementById('val-modal-overlay').classList.add('open');
+  setTimeout(function(){ document.getElementById('val-modal-input').focus(); }, 80);
+}
+
+function valModalCancel() {
+  document.getElementById('val-modal-overlay').classList.remove('open');
+  _valCallback = null;
+}
+
+function valModalConfirm() {
+  var input = document.getElementById('val-modal-input');
+  var entered = input.value.trim().toLowerCase();
+  if (entered === _valExpected) {
+    document.getElementById('val-modal-overlay').classList.remove('open');
+    var cb = _valCallback;
+    _valCallback = null;
+    setTimeout(function(){ if (cb) cb(); }, 50);
+  } else {
+    input.classList.add('error');
+    document.getElementById('val-modal-error').textContent =
+      '✗ Username does not match. Please try again.';
+    input.focus();
+  }
+}
+
+// Allow Enter key to confirm
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('val-modal-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') valModalConfirm();
+    if (e.key === 'Escape') valModalCancel();
+  });
+});
+</script>
+
+<div class="sidebar">
+  <div class="sidebar-title">CASB Results</div>
+
+  <div class="sidebar-section">Navigation</div>
+  <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">
+    📋 All Runs
+  </a>
+
+
+  <div class="sidebar-section">Disk Space</div>
+  <div style="margin:6px 12px 12px;padding:10px 12px;background:rgba(255,255,255,0.12);border-radius:6px">
+    <div id="disk-label" style="color:#fff;font-size:12px;font-weight:700;margin-bottom:6px">Loading...</div>
+    <div style="background:rgba(255,255,255,0.25);border-radius:4px;height:8px;overflow:hidden">
+      <div id="disk-bar" style="height:8px;background:#fff;border-radius:4px;width:0%;transition:width 0.4s"></div>
+    </div>
+    <div id="disk-detail" style="color:#d0eaff;font-size:10px;margin-top:5px"></div>
+  </div>
+  <script>
+  function updateDisk() {
+    fetch('/api/disk?t=' + Date.now())
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        document.getElementById('disk-label').textContent = d.free_human + ' free';
+        document.getElementById('disk-bar').style.width = d.used_pct + '%';
+        document.getElementById('disk-bar').style.background = d.used_pct > 85 ? '#ff5252' : '#fff';
+        document.getElementById('disk-detail').textContent = d.used_human + ' used · ' + d.total_human + ' total';
+      }).catch(function(){});
+  }
+  updateDisk();
+  setInterval(updateDisk, 30000);
+  </script>
+
+</div>
+
+<div class="main">
+  {% block content %}{% endblock %}
+</div>
+
+
+<!-- Username Validation Modal -->
+<div id="val-modal-overlay">
+  <div id="val-modal">
+    <h2 id="val-modal-title">Confirm Action</h2>
+    <p id="val-modal-desc">Enter your username to confirm.</p>
+    <input type="text" id="val-modal-input" placeholder="Enter username" autocomplete="off"/>
+    <div id="val-modal-error"></div>
+    <div id="val-modal-actions">
+      <button class="btn btn-gray" onclick="valModalCancel()">Cancel</button>
+      <button class="btn btn-red" id="val-modal-confirm-btn" onclick="valModalConfirm()">Confirm</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

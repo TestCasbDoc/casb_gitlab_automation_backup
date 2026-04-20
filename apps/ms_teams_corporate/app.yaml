@@ -1,0 +1,44 @@
+# apps/ms_teams_corporate/app.yaml
+# MS Teams Corporate account — CASB activity definitions.
+
+name: MS Teams Corporate
+app_id: ms_teams_corporate
+account_types: [corporate]
+app_url: https://teams.microsoft.com/
+
+log_match:
+  keywords:
+    - ms_teams
+    - post
+    - "app-activity for casb"
+
+expected:
+  application: ms_teams
+  activity: post
+  blocked_by: casb
+
+activities:
+  post:
+    tc_label: TC1
+    category: post
+    nav: "Sign in (corporate) → Click Chat tab → Send text to recipient"
+
+  meet_now_post:
+    tc_label: TC2
+    category: post
+    nav: "Sign in (corporate) → Meet Now → Start meeting → Chat tab → Post"
+
+  forward:
+    tc_label: TC3
+    category: post
+    nav: "Sign in (corporate) → Chat → 3 dots on message → Forward → Send"
+
+  reply:
+    tc_label: TC4
+    category: post
+    nav: "Sign in (corporate) → Search AMRUTA LONI → Hover message → Reply button → Send"
+
+  community_post:
+    tc_label: TC5
+    category: post
+    nav: "Sign in (corporate) → click on Communities tab → open any created community → click on Posts tab → add subject, upload images and files → click on Post button"

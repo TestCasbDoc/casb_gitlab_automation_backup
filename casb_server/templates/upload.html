@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Upload Run{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <a href="{{ url_for('index') }}" class="back-btn">← BACK</a>
+  <h1>Upload Run</h1>
+</div>
+
+<div style="background:#fff;border-radius:8px;padding:28px;max-width:560px;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
+  <p style="font-size:14px;color:#444;margin-bottom:20px">
+    Upload the zipped run folder produced by <code>ms_teams_personal_send_post.py</code>.<br>
+    The zip root must be a folder named <code>run_YYYYMMDD_HHMMSS</code>.
+  </p>
+
+  {% if message %}
+  <div style="background:{% if success %}#e8f5e9{% else %}#ffebee{% endif %};
+              border:1px solid {% if success %}#a5d6a7{% else %}#ef9a9a{% endif %};
+              border-radius:4px;padding:10px 14px;margin-bottom:16px;
+              color:{% if success %}#2e7d32{% else %}#c62828{% endif %};font-size:13px">
+    {{ message }}
+  </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data">
+    <div style="margin-bottom:16px">
+      <label style="font-size:13px;font-weight:700;display:block;margin-bottom:6px">
+        Select ZIP file
+      </label>
+      <input type="file" name="file" accept=".zip" required
+             style="font-size:13px;width:100%;padding:8px;border:1px solid #ccc;border-radius:4px">
+    </div>
+    <button type="submit" class="btn btn-blue" style="font-size:14px;padding:9px 24px">
+      Upload
+    </button>
+  </form>
+
+  <div style="margin-top:28px;padding-top:20px;border-top:1px solid #eee">
+    <div style="font-size:13px;font-weight:700;margin-bottom:10px;color:#1a2540">
+      Auto-upload from automation script
+    </div>
+    <p style="font-size:12px;color:#666;margin-bottom:8px">
+      Add this to the end of <code>ms_teams_personal_send_post.py</code>
+      after <code>generate_html_report()</code>:
+    </p>
+    <pre style="background:#f5f5f5;border:1px solid #ddd;border-radius:4px;
+                padding:12px;font-size:11px;overflow-x:auto;color:#333">import requests, zipfile, tempfile, os
+
+def upload_to_server(run_folder, server="http://SERVER_IP:4012"):
+    tmp = tempfile.mktemp(suffix=".zip")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+        run_name = os.path.basename(run_folder)
+        for root, dirs, files in os.walk(run_folder):
+            for file in files:
+                abs_path = os.path.join(root, file)
+                arc_name = os.path.join(run_name,
+                    os.path.relpath(abs_path, run_folder))
+                zf.write(abs_path, arc_name)
+    with open(tmp, "rb") as f:
+        r = requests.post(f"{server}/api/upload",
+                          files={"file": (run_name+".zip", f)})
+    print(f"[UPLOAD] {r.json()}")
+    os.remove(tmp)
+
+upload_to_server(SCRIPT_DIR)</pre>
+  </div>
+</div>
+{% endblock %}

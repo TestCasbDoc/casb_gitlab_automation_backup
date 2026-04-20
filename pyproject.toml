@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "casb-automation"
+version = "1.0.0"
+description = "CASB Block Verification Automation Framework for Versa SASE"
+authors = [
+    { name = "Versa Networks", email = "casb-automation@versa-networks.com" }
+]
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Proprietary" }
+
+dependencies = [
+    "playwright>=1.40.0",
+    "paramiko>=3.3.0",
+    "pywinauto>=0.6.8",
+    "Pillow>=10.0.0",
+    "pyyaml>=6.0.1",
+    "requests>=2.31.0",
+    "flask>=2.3.0",
+    "waitress>=3.0.0",
+    "werkzeug>=2.3.0",
+    "cryptography>=41.0.0",
+    "pyOpenSSL>=23.0.0",
+]
+
+[project.scripts]
+casb-automation = "casb_run:main"
+
+[tool.setuptools]
+py-modules = ["casb_run"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "apps*"]
+
+[tool.setuptools.package-data]
+"apps" = ["**/*.yaml", "**/*.yml"]

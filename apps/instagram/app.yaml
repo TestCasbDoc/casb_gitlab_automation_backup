@@ -1,0 +1,208 @@
+name: Instagram
+app_id: instagram
+account_types: [any]
+app_url: https://www.instagram.com/
+
+# Keywords and Versa expectations per category — activities reference ``category: <name>`` only.
+
+categories:
+  post:
+    log_match:
+      keywords:
+        - instagram
+        - post
+        - "app-activity for casb"
+    expected:
+      application: instagram
+      activity: post
+      blocked_by: casb
+
+  share:
+    log_match:
+      keywords:
+        - instagram
+        - share
+        - "app-activity for casb"
+    expected:
+      application: instagram
+      activity: share
+      blocked_by: casb
+
+  # DM / composer uploads — VOS fast.log usually says "Upload" / "Media", not the policy token "upload_file"
+  upload:
+    log_match:
+      keywords:
+        - instagram
+        - upload
+        - "app-activity for casb"
+    expected:
+      application: instagram
+      activity: upload_file
+      blocked_by: casb
+
+  # Profile photo change — logs are typically "Profile Picture" / "Picture", not "upload_file"
+  profile_picture:
+    log_match:
+      keywords:
+        - instagram
+        - picture
+        - "app-activity for casb"
+    expected:
+      application: instagram
+      activity: upload_file
+      blocked_by: casb
+
+  delete:
+    log_match:
+      keywords:
+        - instagram
+        - delete
+        - "app-activity for casb"
+    expected:
+      application: instagram
+      activity: delete
+      blocked_by: casb
+
+  edit:
+    log_match:
+      keywords:
+        - instagram
+        - edit
+        - "app-activity for casb"
+    expected:
+      application: instagram
+      activity: edit
+      blocked_by: casb
+
+  like:
+    log_match:
+      keywords:
+        - instagram
+        - like
+        - "app-activity for casb"
+    expected:
+      application: instagram
+      activity: like
+      blocked_by: casb
+
+  logout:
+    log_match:
+      keywords:
+        - instagram
+        - logout
+        - "app-activity for casb"
+    expected:
+      application: instagram
+      activity: logout
+      blocked_by: casb
+
+# `nav` is shown in HTML reports as: "TCn. {nav}" (summary table + per-TC blocks).
+activities:
+  post_comment_home:
+    tc_label: TC1
+    category: post
+    nav: 'go to comments section of any post on the home page->post a comment'
+  post_image:
+    tc_label: TC2
+    category: share
+    nav: 'click on the "+" icon on the left side->create post->upload image->next->next->share'
+  post_multiple_images:
+    tc_label: TC3
+    category: share
+    nav: 'click on the "+" icon on the left side->create post->upload images(upload multiple images)->next->next->share'
+  post_video:
+    tc_label: TC4
+    category: share
+    nav: 'click on the "+" icon on the left side->create post->upload video->next->next->share'
+  change_profile_picture:
+    tc_label: TC5
+    category: profile_picture
+    nav: 'click on profile icon->change profile picture->upload any picture'
+  delete_chat:
+    tc_label: TC6
+    category: delete
+    nav: 'go to your messages->any account->click on info option->delete chat'
+  delete_comment_home:
+    tc_label: TC7
+    category: delete
+    nav: 'on home page->under any post->click on your comment->three dots->delete'
+  delete_comment_own_post:
+    tc_label: TC8
+    category: delete
+    nav: 'go to your own post->choose a comment->click on three dots->delete'
+  delete_group_chat:
+    tc_label: TC9
+    category: delete
+    nav: 'go to messages section->any group chat->details by clicking on group name->delete chat'
+  delete_note_messages:
+    tc_label: TC10
+    category: delete
+    nav: 'go to messages section->at the top->click on your note->delete note'
+  delete_own_post:
+    tc_label: TC11
+    category: delete
+    nav: 'go to your own profile->click on any of your posts->three dots at the corner->click on delete'
+  delete_own_story:
+    tc_label: TC12
+    category: delete
+    nav: 'go to your story on the home page->click on delete'
+  edit_highlight:
+    tc_label: TC13
+    category: edit
+    nav: 'go to highlights->open any one->three dots at the right corner->edit'
+  edit_own_post:
+    tc_label: TC14
+    category: edit
+    nav: 'go to your own profile->your own post->three dots at the corner->edit(edit location/caption or any other block)'
+  like_comment:
+    tc_label: TC15
+    category: like
+    nav: 'go to comments section of any post->like any comment'
+  like_message:
+    tc_label: TC16
+    category: like
+    nav: 'go to messages section->like any message sent by you or to you by clicking on the heart symbol(like)'
+  like_own_post:
+    tc_label: TC17
+    category: like
+    nav: 'go to your own profile page->click on your post->like'
+  like_post_home:
+    tc_label: TC18
+    category: like
+    nav: 'on home page->go to any post->click on like'
+  like_post_search:
+    tc_label: TC19
+    category: like
+    nav: 'go to search bar->search for an account->go to their posts/reels->click on like'
+  like_reel_explore:
+    tc_label: TC20
+    category: like
+    nav: 'go to explore page->open any post/reel->click on like'
+  like_saved_post:
+    tc_label: TC21
+    category: like
+    nav: 'go to saved posts from your profile page->open any post->like'
+  like_story_home:
+    tc_label: TC22
+    category: like
+    nav: 'on home page->open any account story->click on like'
+  share_image_messages:
+    tc_label: TC23
+    category: upload
+    nav: 'go to messages(right corner)->go to any chat->click on upload image option->upload any image->send'
+  share_note_messages:
+    tc_label: TC24
+    category: share
+    nav: 'go to messages section->on the top->find notes section->type anything->share'
+  share_story:
+    tc_label: TC25
+    category: share
+    nav: 'go to home page->any existing story->click on send button->share to any recipient'
+  upload_image_messages:
+    tc_label: TC26
+    category: upload
+    nav: 'go to messages section->send any image or voice note by clicking on image attach icon->send'
+  logout:
+    tc_label: TC27
+    category: logout
+    nav: 'click on more(three vertical dash lines)->logout'

@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+{% block title %}All Runs{% endblock %}
+
+{% block content %}
+<style>
+  /* Run table numeric columns — avoid Jinja inside style="" (IDE CSS linter) */
+  .runs-tbl .num-failed { color: #c62828; font-weight: 700; }
+  .runs-tbl .num-failed-zero { color: #2e7d32; font-weight: 700; }
+  .runs-tbl .pct-all-pass { color: #2e7d32; font-weight: 700; }
+  .runs-tbl .pct-partial { color: #e65100; font-weight: 700; }
+</style>
+<div class="page-header">
+  <h1>📊 CASB Automation — All Runs</h1>
+</div>
+
+<div class="stat-row">
+  <div class="stat-card stat-total">
+    <div class="val">{{ total_runs }}</div>
+    <div class="lbl">Total Runs</div>
+  </div>
+  <div class="stat-card stat-pass">
+    <div class="val">{{ total_pass }}</div>
+    <div class="lbl">✔ Passed</div>
+  </div>
+  <div class="stat-card stat-fail">
+    <div class="val">{{ total_fail }}</div>
+    <div class="lbl">✘ Failed</div>
+  </div>
+  {% if total_runs > 0 %}
+  <div class="stat-card stat-pct">
+    <div class="val">{{ "%.0f"|format(total_pass / total_runs * 100) }}%</div>
+    <div class="lbl">Pass Rate</div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="section-title">{% if runs and runs[0].config and runs[0].config.app_name %}{{ runs[0].config.app_name }}{% else %}CASB{% endif %} {{ runs[0].config.account_type | capitalize if runs and runs[0].config and runs[0].config.account_type else "" }} — Results</div>
+
+{% if runs %}
+<table class="runs-tbl">
+  <thead>
+    <tr>
+      <th>Run ID</th>
+      <th>Timestamp</th>
+      <th>TCs</th>
+      <th>Passed</th>
+      <th>Failed</th>
+      <th>Trigger %</th>
+      <th>Sig IDs</th>
+      <th>SPack</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in runs %}
+    {% set owner = r.run_id.replace('_PINNED', '').split('_')[-1] %}
+    <tr style="cursor:pointer" onclick="toggleCfg('cfg-{{ r.run_id }}')" {% if r.pinned %}class="pinned-row"{% endif %}>
+      <td class="run-id-mono" style="white-space:nowrap">
+        {% if r.pinned %}<span class="pin-badge">📌 PINNED</span> {% endif %}{{ r.run_id.replace("_PINNED", "") }}
+      </td>
+      <td>{{ r.timestamp }}</td>
+      <td>{{ r.total }}</td>
+      <td style="color:#2e7d32;font-weight:700">{{ r.passed }}</td>
+      <td class="{% if r.failed > 0 %}num-failed{% else %}num-failed-zero{% endif %}">{{ r.failed }}</td>
+      <td>
+        <span class="{% if r.passed == r.total and r.total > 0 %}pct-all-pass{% else %}pct-partial{% endif %}">
+          {{ r.trigger_pct }}
+        </span>
+      </td>
+      <td>
+        {% for sid in r.sig_ids %}
+          <span class="sig-id sig-link" style="cursor:pointer"
+            onclick="event.stopPropagation();fetchAndShowSigLines('{{ r.run_id }}', '{{ sid }}')"
+            title="Click to view fast.log lines for Sig ID {{ sid }}">🔍 {{ sid }}</span>
+        {% else %}
+          <span style="color:#999">—</span>
+        {% endfor %}
+      </td>
+      <td>
+        {% if r.config.spack_version %}
+          <span style="font-family:monospace;font-size:12px;font-weight:700;color:#1b5e20;background:#e8f5e9;padding:2px 8px;border-radius:4px">{{ r.config.spack_version }}</span>
+        {% else %}
+          <span style="color:#999">—</span>
+        {% endif %}
+      </td>
+      <td>
+        <span class="badge {% if r.status == 'PASS' %}badge-pass{% elif r.status == 'FAIL' %}badge-fail{% else %}badge-warn{% endif %}">
+          {{ r.status }}
+        </span>
+      </td>
+      <td style="white-space:nowrap" onclick="event.stopPropagation()">
+        <a href="{{ url_for('run_detail', run_id=r.run_id) }}" class="btn btn-blue">View</a>
+        {% if r.has_html %}
+        <a href="{{ url_for('view_report', run_id=r.run_id) }}" class="btn btn-gray" target="_blank">HTML</a>
+        {% endif %}
+        <a href="{{ url_for('download_run', run_id=r.run_id) }}" class="btn btn-green">ZIP</a>
+        <button class="btn" style="background:#6a1b9a;color:#fff" onclick="openEmailModal('{{ r.run_id }}')">✉</button>
+        {% if r.pinned %}
+        <button class="btn btn-unpin" onclick="confirmAction('unpin', '{{ r.run_id }}', '{{ owner }}')">Unpin</button>
+        {% else %}
+        <button class="btn btn-pin"   onclick="confirmAction('pin',   '{{ r.run_id }}', '{{ owner }}')">Pin</button>
+        <button class="btn btn-red"   onclick="confirmAction('delete','{{ r.run_id }}', '{{ owner }}')">Delete</button>
+        {% endif %}
+      </td>
+    </tr>
+    <tr id="cfg-{{ r.run_id }}" style="display:none;background:#f8f9ff">
+        <td colspan="10" style="padding:12px 16px">
+          {% set cfg = r.config %}
+          {% if cfg %}
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px 24px">
+            {% if cfg.account_type %}<div><span style="font-size:10px;color:#888;display:block">Account Type</span><span style="font-family:monospace;font-weight:700;color:#1a237e">{{ cfg.account_type }}</span></div>{% endif %}
+            {% if cfg.vos_org %}<div><span style="font-size:10px;color:#888;display:block">VOS Org</span><span style="font-family:monospace;font-weight:700;color:#1a237e">{{ cfg.vos_org }}</span></div>{% endif %}
+            {% if cfg.ssh_host %}<div><span style="font-size:10px;color:#888;display:block">VOS Host</span><span style="font-family:monospace;font-weight:700;color:#1a237e">{{ cfg.ssh_host }}</span></div>{% endif %}
+            {% if cfg.vos_access_policy %}<div><span style="font-size:10px;color:#888;display:block">Access Policy</span><span style="font-family:monospace;font-weight:700;color:#1a237e">{{ cfg.vos_access_policy }}</span></div>{% endif %}
+            {% if cfg.vos_decrypt_policy %}<div><span style="font-size:10px;color:#888;display:block">Decrypt Policy</span><span style="font-family:monospace;font-weight:700;color:#1a237e">{{ cfg.vos_decrypt_policy }}</span></div>{% endif %}
+            {% if cfg.vos_decrypt_rule %}<div><span style="font-size:10px;color:#888;display:block">Decrypt Rule</span><span style="font-family:monospace;font-weight:700;color:#1a237e">{{ cfg.vos_decrypt_rule }}</span></div>{% endif %}
+            {% if cfg.vos_decrypt_profile %}<div><span style="font-size:10px;color:#888;display:block">Decrypt Profile</span><span style="font-family:monospace;font-weight:700;color:#1a237e">{{ cfg.vos_decrypt_profile }}</span></div>{% endif %}
+            {% if cfg.vos_casb_profile %}<div><span style="font-size:10px;color:#888;display:block">CASB Profile</span><span style="font-family:monospace;font-weight:700;color:#1a237e">{{ cfg.vos_casb_profile }}</span></div>{% endif %}
+            {% if cfg.vos_casb_rule %}<div><span style="font-size:10px;color:#888;display:block">CASB Rule</span><span style="font-family:monospace;font-weight:700;color:#1a237e">{{ cfg.vos_casb_rule }}</span></div>{% endif %}
+            {% if cfg.spack_version %}<div style="grid-column:1/-1;border-top:1px solid #e8eaf6;padding-top:8px;margin-top:4px"><span style="font-size:10px;color:#888;display:block">Security Package (SPack)</span><span style="font-family:monospace;font-weight:700;color:#1b5e20;font-size:14px">{{ cfg.spack_version }}{% if cfg.spack_flavor %} · {{ cfg.spack_flavor }}{% endif %}{% if cfg.spack_date %} · Released {{ cfg.spack_date }}{% endif %}</span></div>{% endif %}
+          </div>
+          {% else %}
+          <span style="color:#aaa;font-style:italic;font-size:12px">No config recorded (old run format)</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+  No runs yet. Run the automation script with <code>--server-url</code> to upload results automatically.
+</div>
+{% endif %}
+
+<script>
+function toggleCfg(id) {
+  var row = document.getElementById(id);
+  row.style.display = (row.style.display === 'none' || row.style.display === '') ? 'table-row' : 'none';
+}
+function submitAction(url) {
+  var form = document.createElement('form');
+  form.method = 'POST';
+  form.action = url;
+  form.style.display = 'none';
+  document.body.appendChild(form);
+  form.submit();
+}
+function confirmAction(action, runId, owner) {
+  var titles  = { pin: 'Pin Run', unpin: 'Unpin Run', delete: 'Delete Run' };
+  var descs   = { pin: 'Enter the run owner username to pin.',
+                  unpin: 'Enter the run owner username to unpin.',
+                  delete: 'Enter the run owner username to permanently delete.' };
+  var labels  = { pin: 'Pin',     unpin: 'Unpin',     delete: 'Delete' };
+  var classes = { pin: 'btn-pin', unpin: 'btn-unpin',  delete: 'btn-red' };
+  valModalOpen(
+    titles[action],
+    descs[action],
+    owner,
+    labels[action],
+    classes[action],
+    function() { submitAction('/run/' + runId + '/' + action); }
+  );
+}
+</script>
+<!-- ── Send Email Modal ─────────────────────────────────── -->
+<div id="email-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:8px;width:560px;max-width:95vw;height:82vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.2)">
+    <!-- Fixed: title bar -->
+    <div style="background:#6a1b9a;padding:16px 20px;border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+      <span style="color:#fff;font-weight:700;font-size:15px">✉ Send Email Report</span>
+      <button onclick="closeEmailModal()" style="background:rgba(255,255,255,0.2);border:none;color:#fff;font-size:16px;cursor:pointer;border-radius:4px;padding:2px 10px">✕</button>
+    </div>
+    <!-- Fixed: custom email input -->
+    <div style="padding:14px 20px 10px;border-bottom:1px solid #eee;flex-shrink:0">
+      <label style="font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:6px">ADD CUSTOM EMAIL</label>
+      <div style="display:flex;gap:8px">
+        <input id="email-custom-input" type="email" placeholder="type@email.com"
+          onkeydown="if(event.key==='Enter')addCustomEmail()"
+          style="flex:1;padding:8px 12px;border:1.5px solid #b3d4f0;border-radius:5px;font-size:13px;outline:none"/>
+        <button onclick="addCustomEmail()" class="btn" style="background:#1a8fe3;color:#fff;padding:8px 14px">Add</button>
+      </div>
+    </div>
+    <!-- Scrollable: only the team checkboxes -->
+    <div style="overflow-y:auto;flex:1;padding:12px 20px" id="email-scroll-area">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <label style="font-size:12px;font-weight:700;color:#555">TEAM MEMBERS</label>
+        <div style="display:flex;gap:8px">
+          <button onclick="selectAllEmails(true)"  style="font-size:11px;color:#1a8fe3;background:none;border:none;cursor:pointer;font-weight:600">Select All</button>
+          <button onclick="selectAllEmails(false)" style="font-size:11px;color:#888;background:none;border:none;cursor:pointer">Clear</button>
+        </div>
+      </div>
+      <div id="email-checkboxes" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
+    </div>
+    <!-- Fixed: summary + buttons -->
+    <div style="padding:10px 20px 14px;border-top:1px solid #eee;flex-shrink:0">
+      <div id="email-selected-summary" style="background:#f3e5f5;border-radius:5px;padding:8px 12px;font-size:12px;color:#6a1b9a;min-height:32px;margin-bottom:10px">No recipients selected</div>
+      <div style="display:flex;justify-content:flex-end;gap:10px">
+        <button onclick="closeEmailModal()" class="btn btn-gray">Cancel</button>
+        <button onclick="sendEmailReport()" class="btn" id="email-send-btn" style="background:#6a1b9a;color:#fff">✉ Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var _emailRunId = null;
+var _customEmails = [];
+var _teamEmails = [
+  {name:"Amruta",   email:"amruta.l@versa-networks.com"},
+  {name:"Hrutuja",  email:"hrutuja.k@versa-networks.com"},
+  {name:"Lisari",   email:"lisari.k@versa-networks.com"},
+  {name:"Lankesh",  email:"lankesh.g@versa-networks.com"},
+  {name:"Pranav",   email:"pranav.k@versa-networks.com"},
+  {name:"Greena",   email:"greena@versa-networks.com"},
+  {name:"Utkarsh",  email:"utkarsh.a@versa-networks.com"},
+  {name:"Megha",    email:"megha.b@versa-networks.com"},
+  {name:"Shubham",  email:"shubham.s@versa-networks.com"},
+  {name:"Shyamala", email:"shyamalapai@versa-networks.com"},
+  {name:"Pavani",   email:"pavanig@versa-networks.com"},
+  {name:"Gowtham",  email:"gowtham.g@versa-networks.com"},
+  {name:"Neha",     email:"neha.s@versa-networks.com"},
+];
+function openEmailModal(runId) {
+  _emailRunId = runId; _customEmails = [];
+  var box = document.getElementById('email-checkboxes');
+  box.innerHTML = '';
+  _teamEmails.forEach(function(m,i){
+    box.innerHTML += '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;padding:4px 8px;border-radius:4px;border:1px solid #eee">' +
+      '<input type="checkbox" value="'+m.email+'" onchange="updateEmailSummary()" style="cursor:pointer"/>' +
+      '<span><b>'+m.name+'</b><br><span style="font-size:11px;color:#888">'+m.email+'</span></span></label>';
+  });
+  updateEmailSummary();
+  document.getElementById('email-modal-overlay').style.display = 'flex';
+  document.getElementById('email-custom-input').value = '';
+}
+function closeEmailModal(){ document.getElementById('email-modal-overlay').style.display='none'; }
+function addCustomEmail(){
+  var val=document.getElementById('email-custom-input').value.trim();
+  if(!val||!val.includes('@')){alert('Please enter a valid email');return;}
+  if(!_customEmails.includes(val)){
+    _customEmails.push(val);
+    renderCustomCheckbox(val);
+    updateEmailSummary();
+  }
+  document.getElementById('email-custom-input').value='';
+}
+function renderCustomCheckbox(em){
+  var box=document.getElementById('email-checkboxes');
+  var label=document.createElement('label');
+  label.style.cssText='display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-radius:5px;cursor:pointer;border:1.5px solid #90caf9;background:#e3f2fd';
+  label.innerHTML='<input type="checkbox" value="'+em+'" checked onchange="updateEmailSummary()" style="cursor:pointer;margin-top:2px"/>'
+    +'<span><b style="color:#1565c0">Custom</b><br><span style="font-size:11px;color:#1a8fe3">'+em+'</span></span>'
+    +"<span onclick='removeCustomEmail("+JSON.stringify(em)+")' style=\"margin-left:auto;cursor:pointer;font-size:16px;color:#1a8fe3;font-weight:700\">&times;</span>";
+  box.insertBefore(label, box.firstChild);
+  document.getElementById('email-scroll-area').scrollTop = 0;
+  box.closest('[style*="overflow-y"]').scrollTop = 0;
+}
+function removeCustomEmail(em){
+  _customEmails=_customEmails.filter(function(e){return e!==em;});
+  var id='custom_'+em.replace(/[^a-z0-9]/gi,'_');
+  var box=document.getElementById('email-checkboxes');
+  box.querySelectorAll('input[value="'+em+'"]').forEach(function(cb){cb.closest('label').remove();});
+  updateEmailSummary();
+}
+function selectAllEmails(c){
+  document.querySelectorAll('#email-checkboxes input').forEach(function(cb){cb.checked=c;});
+  updateEmailSummary();
+}
+function updateEmailSummary(){
+  var s=getSelectedEmails();
+  var el=document.getElementById('email-selected-summary');
+  if(!s.length){el.textContent='No recipients selected';el.style.color='#999';el.style.background='#f5f5f5';}
+  else{el.style.color='#6a1b9a';el.style.background='#f3e5f5';el.innerHTML='<b>'+s.length+' recipient(s):</b> '+s.join(', ');}
+}
+function getSelectedEmails(){
+  var e=[];
+  document.querySelectorAll('#email-checkboxes input:checked').forEach(function(cb){e.push(cb.value);});
+  return e.concat(_customEmails);
+}
+function sendEmailReport(){
+  var r=getSelectedEmails();
+  if(!r.length){alert('Please select at least one recipient.');return;}
+  var btn=document.getElementById('email-send-btn');
+  btn.textContent='Sending...';btn.disabled=true;
+  fetch('/api/send_email/'+_emailRunId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recipients:r})})
+  .then(function(res){return res.json();})
+  .then(function(d){
+    if(d.status==='ok'){alert('✅ Email sent to '+d.sent_to.length+' recipient(s)!');closeEmailModal();}
+    else{alert('❌ Failed: '+(d.error||'Unknown error'));}
+  }).catch(function(e){alert('❌ Error: '+e);})
+  .finally(function(){btn.textContent='✉ Send';btn.disabled=false;});
+}
+</script>
+<!-- Log Lines Modal -->
+<div id="log-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:#0d0f14;border-radius:8px;min-width:700px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,0.5)">
+    <div style="background:#0d5fa3;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;border-radius:8px 8px 0 0">
+      <span id="log-modal-title" style="color:#fff;font-weight:700;font-size:14px;font-family:Consolas,monospace"></span>
+      <button onclick="closeLogModal()" style="background:rgba(255,255,255,0.15);border:none;color:#fff;font-size:18px;cursor:pointer;border-radius:4px;padding:2px 10px">✕</button>
+    </div>
+    <div style="overflow-y:auto;padding:16px 20px">
+      <pre id="log-modal-content" style="margin:0;color:#e0e0e0;font-family:Consolas,monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;line-height:1.7"></pre>
+    </div>
+  </div>
+</div>
+<script>
+function fetchAndShowSigLines(runId, sigId) {
+  document.getElementById('log-modal-title').textContent = 'Loading...';
+  document.getElementById('log-modal-content').textContent = '';
+  document.getElementById('log-modal-overlay').style.display = 'flex';
+  fetch('/api/sig_lines/' + runId + '/' + sigId)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      document.getElementById('log-modal-title').textContent =
+        'Sig ID: ' + sigId + '  —  ' + d.count + ' matching line(s)';
+      document.getElementById('log-modal-content').textContent = d.lines.length
+        ? d.lines.join('\n\n')
+        : '(No fast.log lines available — lines are captured in new runs only)';
+    })
+    .catch(function(e){
+      document.getElementById('log-modal-title').textContent = 'Error';
+      document.getElementById('log-modal-content').textContent = String(e);
+    });
+}
+function closeLogModal() {
+  document.getElementById('log-modal-overlay').style.display = 'none';
+}
+document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeLogModal(); });
+</script>
+<style>.sig-link:hover{opacity:0.8;text-decoration:underline;}</style>
+{% endblock %}
