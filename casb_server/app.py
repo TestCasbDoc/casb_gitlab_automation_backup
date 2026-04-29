@@ -270,6 +270,14 @@ def _tc_table(run_id):
             "false_sig_ids"   : false_sig_ids,
             "sig_to_lines"    : sig_to_lines,
             "false_sig_to_lines": false_sig_to_lines,
+            "lef_confirmed"      : r.get("lef_confirmed",      False),
+            "lef_skipped"        : r.get("lef_skipped",        True),
+            "session_verified"   : r.get("session_verified",   False),
+            "session_skipped"    : r.get("session_skipped",    True),
+            "vos_stats_verified" : r.get("vos_stats_verified", False),
+            "vos_stats_skipped"  : r.get("vos_stats_skipped",  True),
+            "vos_stats_verified": r.get("vos_stats_verified", False),
+            "vos_stats_skipped" : r.get("vos_stats_skipped",  True),
         })
     return rows
 
@@ -303,6 +311,9 @@ def run_detail(run_id):
     # HAR files
     har_dir    = os.path.join(run_dir, "har_files")
     har_files  = sorted(os.listdir(har_dir)) if os.path.isdir(har_dir) else []
+    # LEF logs
+    lef_dir   = os.path.join(run_dir, "lef_logs")
+    lef_files = sorted(os.listdir(lef_dir)) if os.path.isdir(lef_dir) else []
     # Screenshots
     screenshots = sorted([
         f for f in os.listdir(run_dir)
@@ -314,6 +325,7 @@ def run_detail(run_id):
                            run_id=run_id,
                            dump_files=dump_files,
                            har_files=har_files,
+                           lef_files=lef_files,
                            screenshots=screenshots)
 
 
@@ -473,7 +485,7 @@ def unpin_run(run_id):
 def delete_run(run_id):
     run_id  = secure_filename(run_id)
 
-    # ── Guard: refuse to delete pinned runs ──────────────────────────────────
+    # Guard: refuse to delete pinned runs
     pins = _load_pins()
     if run_id in pins or run_id + "_PINNED" in pins:
         return jsonify({"error": "Cannot delete a pinned run. Unpin it first."}), 403

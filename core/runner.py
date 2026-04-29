@@ -254,7 +254,6 @@ def run_all(app_id: str, account_type: str, browser, script_dir: str,
                 activity_name, tc_label, **kwargs
             )
             result["recipient"] = recipient
-            all_results.append(result)
 
             # ── Post-TC: VOS info dump ────────────────────────────
             run_vos_info_dump(f"{tc_label}_{activity_name}")
@@ -264,10 +263,21 @@ def run_all(app_id: str, account_type: str, browser, script_dir: str,
                 print(f"   [{tc_label}] Waiting for session fetch thread...")
                 session_thread.join(timeout=30)
 
+            # ── Session extensive verification (needs vos_dump) ───────────
+            activity_obj._finish_session_verification(result, tc_label)
+
+            # ── VOS stats counter verification ──────────────────────
+            activity_obj._finish_vos_stats_verification(result, tc_label)
+
+            result["status"] = "PASS" if not result["fail_reason"] else "FAIL"
+
             # ── Save/discard HAR ──────────────────────────────────
             har = result.pop("_har", None)
             if har:
                 har.save_or_discard(result.get("fail_reason", []))
+
+            # Append after all TC steps (including session / VOS stats) are recorded
+            all_results.append(result)
 
         if skipped:
             print(f"\n   Skipped: {', '.join(skipped)} (not in --activities)")

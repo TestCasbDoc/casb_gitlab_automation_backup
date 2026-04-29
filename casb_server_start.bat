@@ -6,14 +6,14 @@
 ::   casb_server_start.bat [casb-automation args...]
 ::
 :: Examples:
-::   Auto-detect RDP IP (default):
+::   Auto-detect RDP IP:
 ::     casb_server_start.bat --applications ms_teams_personal --host 10.0.0.1 --pwd secret --ssh-user admin --user amruta
 ::
-::   Store results on a different server (manual override):
-::     casb_server_start.bat --applications ms_teams_personal --host 10.0.0.1 --pwd secret --ssh-user admin --user amruta --server-url http://10.196.3.27:4012
+::   With LEF verification:
+::     casb_server_start.bat ... --analytics-host 10.196.3.100 --gateway-name SASE-GW-B2
 ::
-:: NOTE: Server keeps running after automation finishes.
-::       To stop manually: taskkill /IM python.exe /F
+::   Store results on different server:
+::     casb_server_start.bat ... --server-url http://10.196.3.27:4012
 :: ============================================================
 
 set SCRIPT_DIR=%~dp0
@@ -21,18 +21,18 @@ set SERVER_DIR=%SCRIPT_DIR%casb_server
 set MY_IP=
 set MANUAL_SERVER_URL=
 
-:: ── Check if --server-url was manually passed ─────────────────
+:: ── Activate venv if present ─────────────────────────────────
+if exist "%SCRIPT_DIR%.venv\Scripts\activate.bat" (
+    call "%SCRIPT_DIR%.venv\Scripts\activate.bat"
+    echo [OK] Virtual environment activated
+)
+
+:: ── Check if --server-url was manually provided ───────────────
 set ALL_ARGS=%*
 echo %ALL_ARGS% | find /i "--server-url" >nul 2>&1
 if %errorLevel%==0 (
     echo [OK] Using manually provided --server-url
     set MANUAL_SERVER_URL=1
-)
-
-:: ── Activate venv if present ─────────────────────────────────
-if exist "%SCRIPT_DIR%.venv\Scripts\activate.bat" (
-    call "%SCRIPT_DIR%.venv\Scripts\activate.bat"
-    echo [OK] Virtual environment activated
 )
 
 :: ── Auto-detect RDP IP only if --server-url not provided ─────
@@ -44,14 +44,10 @@ for /f "tokens=2" %%a in ('netstat -n ^| find ":3389" ^| find "ESTABLISHED"') do
         goto :ip_found
     )
 )
-
-:: Fallback: pick 10.196.x.x from ipconfig
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| find "IPv4" ^| find "10.196."') do (
     set MY_IP=%%a
     goto :ip_found
 )
-
-:: Last resort: pick first 10.x.x.x
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| find "IPv4" ^| find "10."') do (
     set MY_IP=%%a
     goto :ip_found
@@ -62,7 +58,6 @@ set MY_IP=%MY_IP: =%
 set SERVER_URL=http://%MY_IP%:4012
 echo [OK] Detected RDP IP: %MY_IP%
 echo [OK] Server URL: %SERVER_URL%
-goto :start_server
 
 :start_server
 :: ── Start CASB server (only if not already running) ──────────
@@ -85,14 +80,9 @@ echo ========================================================
 echo   Running CASB Automation...
 if defined MANUAL_SERVER_URL (
     echo   Uploading results to: manually provided --server-url
-) else (
-    echo   Uploading results to: %SERVER_URL%
-)
-echo ========================================================
-
-if defined MANUAL_SERVER_URL (
     python "%SCRIPT_DIR%run.py" %*
 ) else (
+    echo   Uploading results to: %SERVER_URL%
     python "%SCRIPT_DIR%run.py" --server-url %SERVER_URL% %*
 )
 set AUTOMATION_EXIT=%errorLevel%

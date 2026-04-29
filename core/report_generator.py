@@ -39,6 +39,14 @@ def generate_html_report(all_results):
         c = colors.get(s, "#555")
         return f'<span class="badge" style="background:{c}">{s}</span>'
 
+    def verify_cell(confirmed, skipped):
+        """Generic summary-table cell: confirmed / skipped / not verified."""
+        if skipped:
+            return "Skipped", "#ff6f00"
+        if confirmed:
+            return "Verified", "#00c853"
+        return "Not Verified", "#d50000"
+
     def step_card(num, title, status, details, screenshot_b64=None):
         borders = {"pass": "#00c853", "fail": "#d50000", "info": "#0288d1",
                    "skipped": "#ff6f00", "warn": "#ff6f00"}
@@ -198,6 +206,11 @@ def generate_html_report(all_results):
             + "".join(f"<li>{fr}</li>" for fr in fails)
             + '</ul></div>'
         ) if fails else ""
+        step_count = len(result.get("steps", []))
+        steps_note = (
+            f'<div class="tc-steps-note">Execution steps recorded: <b>{step_count}</b> '
+            f'(same order as runtime).</div>'
+        )
         return (
             f'<div class="tc-block">'
             f'<div class="tc-hdr">'
@@ -212,6 +225,7 @@ def generate_html_report(all_results):
             f'{badge(st)}'
             f'</div></div>'
             f'{fails_html}'
+            f'{steps_note}'
             f'<div class="tc-steps">{steps_html}</div>'
             f'</div>'
         )
@@ -244,7 +258,7 @@ def generate_html_report(all_results):
             f'<div class="act-group">'
             f'<div class="act-hdr">'
             f'<span class="act-icon">{act_icon}</span>'
-            f'<span class="act-name">{_APP_NAME} &mdash; {act_name} Activity</span>'
+            f'<span class="act-name">{_APP_NAME} &mdash; {act_name}</span>'
             f'<span class="act-count">{act_pass}/{act_total} passed</span>'
             f'<span class="act-status" style="color:{act_color}">{act_overall}</span>'
             f'</div>'
@@ -272,7 +286,6 @@ def generate_html_report(all_results):
         false_sigs = r.get("false_sig_ids", [])
         false_cell = ", ".join(false_sigs) if false_sigs else "None"
         false_clr  = "#d50000" if false_sigs else "#00c853"
-        ck   = lambda v: "✓" if v else "✗"
         _m         = _get_meta(r)
         nav_detail = f"{_m['tc_num']}. {_m['nav']}"
         app_name   = _m["app_name"]
@@ -290,6 +303,11 @@ def generate_html_report(all_results):
             )
         else:
             sig_id_cell = sig_ids[0]
+
+        lef_txt, lef_clr = verify_cell(r.get("lef_confirmed"), r.get("lef_skipped"))
+        ses_txt, ses_clr = verify_cell(r.get("session_verified"), r.get("session_skipped"))
+        vos_txt, vos_clr = verify_cell(r.get("vos_stats_verified"), r.get("vos_stats_skipped"))
+
         sum_rows += (
             f'<tr>'
             f'<td>{r.get("timestamp","")}</td>'
@@ -300,6 +318,9 @@ def generate_html_report(all_results):
             f'<td style="color:{cbclr};font-weight:600">{casb_popup}</td>'
             f'<td style="color:{dclr};font-weight:600">{dval}</td>'
             f'<td style="color:{flc};font-weight:600">{flok}</td>'
+            f'<td style="color:{lef_clr};font-weight:600">{lef_txt}</td>'
+            f'<td style="color:{ses_clr};font-weight:600">{ses_txt}</td>'
+            f'<td style="color:{vos_clr};font-weight:600">{vos_txt}</td>'
             f'<td style="color:{false_clr};font-family:var(--mono);font-size:11px">{false_cell}</td>'
             f'<td style="color:{sc};font-weight:700">{st}</td>'
             f'</tr>'
@@ -388,6 +409,7 @@ body{{background:var(--bg);color:var(--txt);font-family:var(--sans);min-height:1
 .tc-right{{display:flex;align-items:center;gap:10px}}
 .tc-ts{{font-family:var(--mono);font-size:10px;color:var(--mut)}}
 .tc-steps{{padding:12px 18px 16px}}
+.tc-steps-note{{font-family:var(--mono);font-size:10px;color:var(--mut);padding:0 18px 8px}}
 .tc-fails{{background:rgba(255,23,68,.07);border-left:3px solid var(--fail);padding:8px 18px;font-family:var(--mono);font-size:11px;color:#ff8a80}}
 .tc-fails ul{{margin-top:4px;padding-left:14px}}
 </style>
@@ -400,7 +422,7 @@ body{{background:var(--bg);color:var(--txt);font-family:var(--sans);min-height:1
       <div class="brand-ico">&#128737;</div>
       <div>
         <h1>CASB Block Verification Report</h1>
-        <p>{_APP_NAME} &middot; Versa SASE &middot; fast.log + recipient browser verification</p>
+        <p>{_APP_NAME} &middot; Versa SASE &middot; full run trace: pre-checks, each TC, and every registered step below</p>
       </div>
     </div>
     <div class="meta">
@@ -425,20 +447,25 @@ body{{background:var(--bg);color:var(--txt);font-family:var(--sans);min-height:1
   {cli_cards}
   <div class="sec-title">Step 2 &mdash; Pre-Test: Clear VOS Stats + fast.log</div>
   {vos_clear_cards}
-  <div class="sec-title">Step 3 &mdash; Recipient Test Cases</div>
+  <div class="sec-title">Step 3 &mdash; Test cases (all execution steps per TC)</div>
+  <p style="font-size:12px;color:var(--mut);margin:-8px 0 16px;max-width:720px;line-height:1.5">
+    Each block lists every step appended to <span style="font-family:var(--mono)">result[&quot;steps&quot;]</span>
+    in runtime order (browser, CASB, fast.log, LEF, session, VOS stats, etc.).
+  </p>
   {rec_html}
   <div class="sec-title">Final Summary</div>
   <table class="stbl">
     <thead><tr>
       <th>Timestamp</th><th>Application</th><th>Activity</th><th>Navigation Detail</th>
       <th>Sig ID</th><th>CASB Block Popup</th><th>Activity Blocked</th><th>Fast Log Signature</th>
+      <th>LEF (casbLog)</th><th>Session (ext.)</th><th>VOS stats</th>
       <th>False Sig ID Hits</th><th>Result</th>
     </tr></thead>
     <tbody>
       {sum_rows}
       <tr style="background:var(--sur2);font-weight:700;border-top:2px solid var(--bdr)">
         <td colspan="4" style="color:var(--acc)">TOTAL</td>
-        <td colspan="5" style="color:var(--mut);font-size:11px">
+        <td colspan="8" style="color:var(--mut);font-size:11px">
           Navigations: {passed} passed, {failed} failed out of {total}
         </td>
         <td style="color:{'var(--pass)' if failed==0 else 'var(--fail)'};">{passed}/{total} PASS ({int(passed/total*100) if total else 0}%)</td>

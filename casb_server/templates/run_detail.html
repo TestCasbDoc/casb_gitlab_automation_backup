@@ -47,6 +47,9 @@
       <th>Activity Blocked</th>
       <th>Fast Log Signature</th>
       <th>False Sig ID Hits</th>
+      <th>LEF (casbLog)</th>
+      <th>Session Extensive</th>
+      <th>VOS Stats</th>
       <th>Status</th>
       <th>Fail Reason</th>
     </tr>
@@ -119,6 +122,33 @@
         {% endif %}
       </td>
       <td>
+        {% if r.lef_skipped %}
+          <span class="badge badge-warn">SKIPPED</span>
+        {% elif r.lef_confirmed %}
+          <span class="badge badge-yes">&#10003; Verified</span>
+        {% else %}
+          <span class="badge badge-no">&#10007; Not Verified</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if r.session_skipped %}
+          <span class="badge badge-warn">SKIPPED</span>
+        {% elif r.session_verified %}
+          <span class="badge badge-yes">&#10003; Verified</span>
+        {% else %}
+          <span class="badge badge-no">&#10007; Not Verified</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if r.vos_stats_skipped %}
+          <span class="badge badge-warn">SKIPPED</span>
+        {% elif r.vos_stats_verified %}
+          <span class="badge badge-yes">&#10003; Verified</span>
+        {% else %}
+          <span class="badge badge-no">&#10007; Not Verified</span>
+        {% endif %}
+      </td>
+      <td>
         <span class="badge {% if r.status == 'PASS' %}badge-pass{% else %}badge-fail{% endif %}">
           {{ r.status }}
         </span>
@@ -157,6 +187,19 @@
   <li style="display:flex;gap:6px;align-items:center">
     <a href="{{ url_for('view_file', run_id=run_id, filename='har_files/' + f) }}" class="btn btn-blue" style="font-size:11px;padding:3px 10px">👁 View</a>
     <a href="{{ url_for('download_file', run_id=run_id, filename='har_files/' + f) }}" class="btn btn-gray" style="font-size:11px;padding:3px 10px">⬇ {{ f }}</a>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<!-- LEF Logs -->
+{% if lef_files %}
+<div class="section-title" style="margin-top:20px">LEF Log Files</div>
+<ul class="file-list">
+  {% for f in lef_files %}
+  <li style="display:flex;gap:6px;align-items:center">
+    <a href="{{ url_for('view_file', run_id=run_id, filename='lef_logs/' + f) }}" class="btn btn-blue" style="font-size:11px;padding:3px 10px">&#128065; View</a>
+    <a href="{{ url_for('download_file', run_id=run_id, filename='lef_logs/' + f) }}" class="btn btn-gray" style="font-size:11px;padding:3px 10px">&#8595; {{ f }}</a>
   </li>
   {% endfor %}
 </ul>

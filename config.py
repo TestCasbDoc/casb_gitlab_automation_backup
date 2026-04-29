@@ -65,15 +65,31 @@ FAST_LOG     = "/var/log/versa/idp/fast.log"
 LOG_MATCH_KEYWORDS = ["ms_teams", "post", "app-activity for casb"]
 
 # ------------------------------------------------------------
+# ANALYTICS / LEF CONFIGURATION
+# ------------------------------------------------------------
+# Set via --analytics-host, --analytics-pwd, --gateway-name CLI args.
+# analytics SSH user + port reuse SSH_USER + SSH_PORT from above.
+ANALYTICS_HOST    = ""   # Analytics node IP  e.g. 10.196.3.100
+ANALYTICS_PWD     = ""   # Analytics SSH password
+GATEWAY_NAME      = ""   # e.g. SASE-GW-B2
+# If True, LEF runs after fast.log (no overlap with CASB popup). If False and
+# analytics host + gateway are set, LEF runs in parallel with popup validation.
+LEF_SEQUENTIAL_ONLY = False
+
+# ------------------------------------------------------------
 # VOS BRANCH CONFIGURATION
 # ------------------------------------------------------------
-VOS_ORG_NAME            = "ENDTOEND-Tenant-2"
-VOS_ACCESS_POLICY_NAME  = "Default-Policy"
-VOS_DECRYPTION_POLICY_NAME = "Default-Policy"
-VOS_DECRYPTION_RULE_NAME   = "decryption_rule_casb"
-VOS_DECRYPT_PROFILE_NAME   = "decrypt_profile"
-VOS_CASB_PROFILE_NAME      = "casb_mobile_test_rule"
-VOS_CASB_RULE_NAME         = "mobile_test_rule"
+VOS_ORG_NAME            = ""
+VOS_ACCESS_POLICY_NAME  = ""
+VOS_DECRYPTION_POLICY_NAME = ""
+VOS_DECRYPTION_RULE_NAME   = ""
+VOS_DECRYPT_PROFILE_NAME   = ""
+VOS_CASB_PROFILE_NAME      = ""
+VOS_CASB_RULE_NAME         = ""
+VOS_CASB_PROFILE_RULE_NAME = ""
+VOS_CASB_PROFILE_INSTAGRAM_RULE_NAME = ""
+
+INSTAGRAM_NOTE_HANDLE = (os.environ.get("INSTAGRAM_NOTE_HANDLE", "") or "").strip().lstrip("@")
 
 # ------------------------------------------------------------
 # APPID REPORT METADATA CONFIGURATION

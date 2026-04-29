@@ -691,6 +691,62 @@ def run_vos_info_dump(tc_name: str = "") -> dict:
         ),
     ]
 
+    # ── appid report_metadata via vsmd ───────────────────────────────────
+    # Appended separately because vsmd requires a different shell context
+    # (vsh connect vsmd → vsm-vcsn0> prompt), separate from the CLI shell.
+    def _run_vsmd_appid_section(lines_list: list, sections_dict: dict):
+        """Open vsmd shell, run show appid report_metadata, append to dump."""
+        try:
+            vsmd_client = _ssh_connect()
+            vsmd_shell  = vsmd_client.invoke_shell(width=220, height=50)
+            vsmd_shell.settimeout(2.0)
+            import time as _time
+
+            def _vread(timeout=5.0):
+                buf = b""
+                deadline = _time.time() + timeout
+                while _time.time() < deadline:
+                    try:
+                        chunk = vsmd_shell.recv(4096)
+                        if chunk: buf += chunk
+                    except Exception:
+                        _time.sleep(0.1)
+                return buf.decode("utf-8", errors="replace")
+
+            _vread(2.0)  # banner
+            vsmd_shell.send("vsh connect vsmd\n")
+            _time.sleep(1.0)
+            vsmd_buf = _vread(5.0)
+            if "vsm-vcsn0>" not in _strip_ansi(vsmd_buf):
+                raise RuntimeError(f"vsmd prompt not seen: {_strip_ansi(vsmd_buf).strip()[-80:]}")
+
+            vsmd_shell.send("show appid report_metadata\r\n")
+            _time.sleep(1.0)
+            out = _vread(5.0)
+            clean = _strip_ansi(out).strip()
+
+            sep = "=" * 70
+            lines_list += [
+                f"\n{sep}",
+                "  appid report_metadata (vsmd)",
+                f"  Timestamp : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                sep,
+                "Command: vsh connect vsmd → show appid report_metadata",
+                "",
+                clean,
+                "",
+            ]
+            sections_dict["appid report_metadata"] = clean
+            print(f"   [VOS-DUMP] ✓ appid report_metadata (vsmd)")
+
+            vsmd_shell.send("exit\n")
+            _time.sleep(0.3)
+            vsmd_client.close()
+        except Exception as _e:
+            lines_list.append(f"\nappid report_metadata (vsmd): ERROR: {_e}")
+            sections_dict["appid report_metadata"] = f"ERROR: {_e}"
+            print(f"   [VOS-DUMP] ✗ appid report_metadata (vsmd): {_e}")
+
     print(f"\n{'=' * 55}")
     print("POST-TEST: VOS Branch Info Dump")
     print(f"{'=' * 55}")
@@ -776,6 +832,9 @@ def run_vos_info_dump(tc_name: str = "") -> dict:
             _run_cmd(shell, "exit", timeout=5)
         except Exception:
             pass
+
+        # ── appid report_metadata via vsmd ────────────────────────
+        _run_vsmd_appid_section(lines, result["sections"])
 
         result["success"] = True
 

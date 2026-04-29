@@ -107,6 +107,7 @@ parser.add_argument("--decrypt-rule",            default=None)
 parser.add_argument("--decrypt-profile",         default=None)
 parser.add_argument("--casb-profile",            default=None)
 parser.add_argument("--casb-access-policy-rule", default=None)
+parser.add_argument("--casb-profile-rule",       default=None)
 # ── Optional args ────────────────────────────────────────────────────────────
 parser.add_argument("--applications",  default=None)
 parser.add_argument("--account_type",  default=None, choices=["personal", "corporate"])
@@ -115,9 +116,14 @@ parser.add_argument("--activities",    default="all")
 parser.add_argument("--qosmos",        default="True")
 parser.add_argument("--send-email",    default=None)
 parser.add_argument("--smtp-pwd",      default=None)
+parser.add_argument("--analytics-host", default=None,
+                    help="Analytics node IP for LEF (casbLog) verification")
+parser.add_argument("--analytics-pwd",  default=None,
+                    help="Analytics SSH password (default: same as --pwd)")
+parser.add_argument("--gateway-name",   default=None,
+                    help="Gateway name for LEF log path e.g. SASE-GW-B2")
 parser.add_argument("--pin",           action="store_true", default=False)
-parser.add_argument("--capture-har",   action="store_true", default=False,
-                        help="Capture HAR for ALL TCs (default: only failed TCs)")
+parser.add_argument("--capture-har",   action="store_true", default=False)
 parser.add_argument("--manage",       default=None, choices=["pin","unpin","delete","list"],
                     help="Manage runs: pin / unpin / delete / list")
 parser.add_argument("--run",          default=None,
@@ -168,7 +174,10 @@ FULL EXAMPLE:
   --send-email        Email(s) after run         e.g. a@versa.com,b@versa.com
   --smtp-pwd          Gmail SMTP password        (overrides config.py)
   --pin               Pin this run               (default: not pinned)
-  --capture-har       Capture HAR for ALL TCs    (default: failed TCs only)
+  --capture-har       Capture HAR files          (default: disabled)
+  --analytics-host    Analytics IP for LEF check  e.g. 10.196.3.100
+  --analytics-pwd     Analytics SSH password      (default: same as --pwd)
+  --gateway-name      Gateway name               e.g. SASE-GW-B2
 
 ═══════════════════════════════════════════════════════════
   MANAGE COMMANDS  (no --host/--pwd/--ssh-user needed)
@@ -233,6 +242,7 @@ if not args.decrypt_rule:            missing.append("--decrypt-rule")
 if not args.decrypt_profile:         missing.append("--decrypt-profile")
 if not args.casb_profile:            missing.append("--casb-profile")
 if not args.casb_access_policy_rule: missing.append("--casb-access-policy-rule")
+if not args.casb_profile_rule:       missing.append("--casb-profile-rule")
 if missing:
     print(f"\n[ERROR] Missing required argument(s): {', '.join(missing)}")
     print(f"\nRequired for every run:")
@@ -248,6 +258,7 @@ if missing:
     print(f"  --decrypt-profile          VOS decrypt profile    e.g. decrypt_profile")
     print(f"  --casb-profile             VOS CASB profile       e.g. casb_mobile_test_rule")
     print(f"  --casb-access-policy-rule  VOS CASB rule          e.g. mobile_test_rule")
+    print(f"  --casb-profile-rule        CASB profile rule      e.g. ms_teams_automation")
     print(f"\nRun with --help for full usage.")
     sys.exit(1)
 
@@ -344,7 +355,14 @@ if args.decrypt_policy:  _cfg.VOS_DECRYPTION_POLICY_NAME = args.decrypt_policy
 if args.decrypt_rule:    _cfg.VOS_DECRYPTION_RULE_NAME   = args.decrypt_rule
 if args.decrypt_profile: _cfg.VOS_DECRYPT_PROFILE_NAME   = args.decrypt_profile
 if args.casb_profile:    _cfg.VOS_CASB_PROFILE_NAME      = args.casb_profile
-if args.casb_access_policy_rule: _cfg.VOS_CASB_RULE_NAME = args.casb_access_policy_rule
+if args.casb_access_policy_rule: _cfg.VOS_CASB_RULE_NAME        = args.casb_access_policy_rule
+if args.casb_profile_rule:       _cfg.VOS_CASB_PROFILE_RULE_NAME = args.casb_profile_rule
+# ── Analytics / LEF config ──────────────────────────────────────────
+if args.analytics_host: _cfg.ANALYTICS_HOST = args.analytics_host
+if args.analytics_pwd:  _cfg.ANALYTICS_PWD  = args.analytics_pwd
+elif args.analytics_host: _cfg.ANALYTICS_PWD = args.pwd  # default to --pwd
+if args.gateway_name:   _cfg.GATEWAY_NAME   = args.gateway_name
+
 if args.qosmos is not None:
     _cfg.VOS_APPID_REPORT_METADATA = "enable" if args.qosmos.lower() in ("true","1","yes") else "disable"
 
@@ -626,7 +644,7 @@ def _upload_to_server(run_folder, server_url):
             for root, dirs, files in os.walk(run_folder):
                 for file in files:
                     abs_path = os.path.join(root, file)
-                    arc_name = os.path.join(run_name, os.path.relpath(abs_path, run_folder))
+                    arc_name = run_name + "/" + os.path.relpath(abs_path, run_folder).replace(os.sep, "/")
                     zf.write(abs_path, arc_name)
         with open(tmp, "rb") as f:
             resp = requests.post(
@@ -1032,7 +1050,7 @@ with sync_playwright() as pw:
                 run_navs     = run_navs,
                 config_module= _cfg,
                 capture_har     = True,
-        capture_har_all = args.capture_har,
+                capture_har_all = args.capture_har,
             )
 
             # Report
@@ -1076,12 +1094,25 @@ with sync_playwright() as pw:
                     return min(_tc_meta_cli.values(), key=lambda x: x[0])
                 return ("TC?", "?", "?")
 
-            W = 138
+            W = 178
+
+            def _sum3(confirmed, skipped):
+                if skipped:
+                    return "Skipped"
+                return "Verified" if confirmed else "Not Verified"
+
             print("\n" + "=" * W)
             print(f"  FINAL SUMMARY  |  OVERALL: {overall}  ({passed}/{total} passed, {failed} failed)")
             print("=" * W)
-            print(f"  {'TC':<6}  {'Activity':<8}  {'Navigation':<52}  {'CASB Block Popup':<18}  {'Activity Blocked':<18}  {'Fast Log Signature':<20}  {'False Sig ID Hits':<20}  Result")
-            print(f"  {'-'*6}  {'-'*8}  {'-'*52}  {'-'*18}  {'-'*18}  {'-'*20}  {'-'*20}  ------")
+            print(
+                f"  {'TC':<6}  {'Activity':<8}  {'Navigation':<40}  {'CASB':<14}  {'UI blk':<14}  "
+                f"{'fast.log':<14}  {'LEF':<14}  {'Session':<14}  {'VOS':<14}  "
+                f"{'False sigs':<18}  Result"
+            )
+            print(
+                f"  {'-'*6}  {'-'*8}  {'-'*40}  {'-'*14}  {'-'*14}  "
+                f"{'-'*14}  {'-'*14}  {'-'*14}  {'-'*14}  {'-'*18}  ------"
+            )
             for r in all_results:
                 tc, act, nav   = _resolve_cli_meta(r.get("activity_name"))
                 st             = r.get("status", "FAIL")
@@ -1090,9 +1121,17 @@ with sync_playwright() as pw:
                 fl             = r.get("fast_log_confirmed", False)
                 fls            = r.get("fast_log_skipped",   False)
                 fast_log_sig   = "Skipped"      if fls else ("Verified" if fl    else "Not Verified")
+                lef_s          = _sum3(r.get("lef_confirmed"), r.get("lef_skipped"))
+                ses_s          = _sum3(r.get("session_verified"), r.get("session_skipped"))
+                vos_s          = _sum3(r.get("vos_stats_verified"), r.get("vos_stats_skipped"))
                 false_sigs     = r.get("false_sig_ids", [])
                 false_sig_str  = ", ".join(false_sigs) if false_sigs else "None"
-                print(f"  {tc:<6}  {act:<8}  {nav:<52}  {casb_popup:<18}  {act_blocked:<18}  {fast_log_sig:<20}  {false_sig_str:<20}  {st}")
+                nav40 = (nav or "")[:40]
+                print(
+                    f"  {tc:<6}  {act:<8}  {nav40:<40}  {casb_popup:<14}  {act_blocked:<14}  "
+                    f"{fast_log_sig:<14}  {lef_s:<14}  {ses_s:<14}  {vos_s:<14}  "
+                    f"{false_sig_str:<18}  {st}"
+                )
             print("-" * W)
             print(f"  TOTAL: {passed} passed, {failed} failed out of {total}  ({int(passed/total*100) if total else 0}%)")
             print("=" * W)

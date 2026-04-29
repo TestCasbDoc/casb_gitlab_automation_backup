@@ -15,6 +15,7 @@ Adding a new app means implementing those 3 things above. Nothing else.
 import time
 import sys
 import os
+import threading
 
 # Add project root to path so all imports work regardless of where
 # this file sits in the directory tree
@@ -75,10 +76,13 @@ class BaseActivity:
           3.  Start fast.log SSH capture (keywords from app.yaml)
           4.  Call _do_{activity_name}(page, result, **kwargs)
               App stores poller in result["_poller"] via _after_send.
-          5.  Wait for CASB AlertWindow popup + validate
-          6.  Finish log capture + validate
-          7.  Determine overall pass/fail
-          8.  Register to report
+          5.  CASB AlertWindow popup + validate (LEF on Analytics SSH runs in
+              parallel when ANALYTICS_HOST + GATEWAY_NAME are set and
+              LEF_SEQUENTIAL_ONLY is False)
+          6.  Join session poller / session dump
+          7.  Finish fast.log capture + validate
+          8.  LEF if not already done in step 5 (sequential / skipped parallel)
+          9.  Pass/fail + register to report
 
         Returns: (result dict, session_thread or None)
         """
@@ -126,9 +130,10 @@ class BaseActivity:
         poller_label = result.pop("_poller_label", tc_label)
         session_thread = result.pop("_session_thread", None)
 
-        # ── Step 4: CASB popup wait ───────────────────────────────
+        # ── Step 4: CASB block popup validation (+ LEF in parallel when eligible)
+        lef_already_applied = False
         if send_attempted:
-            self._wait_casb_popup(page, result, tag=tc_label)
+            lef_already_applied = self._run_casb_popup_with_lef_parallel(page, result, tc_label)
             time.sleep(5)   # give fast.log time to flush
 
         # ── Step 4b: Join poller and write session dump ───────────
@@ -156,10 +161,15 @@ class BaseActivity:
         # ── Step 5: Finish log capture ────────────────────────────
         self._finish_log_capture(cap, result, f"{tc_label}-log")
 
-        # ── Step 6: Pass/fail ─────────────────────────────────────
+        # ── Step 6: LEF if parallel path did not run it (sequential / no analytics)
+        if not lef_already_applied:
+            self._finish_lef_verification(result, f"{tc_label}-lef")
+
+        # ── Step 7: Pass/fail ─────────────────────────────────────
+
         result["status"] = "PASS" if not result["fail_reason"] else "FAIL"
 
-        # ── Step 7: Register ──────────────────────────────────────
+        # ── Step 8: Register ─────────────────────────────────────
         self._register_to_report(result)
         return result, session_thread
 
@@ -291,6 +301,16 @@ class BaseActivity:
             "fast_log_sig_ids"     : [],
             "fast_log_multi_sigs"  : False,
             "false_sig_ids"        : [],
+            "lef_confirmed"        : False,
+            "lef_skipped"          : False,
+            "lef_matched_lines"    : [],
+            "access_confirmed"     : False,
+            "session_verified"     : False,
+            "session_skipped"      : False,
+            "session_fail_fields"  : [],
+            "vos_stats_verified"   : False,
+            "vos_stats_skipped"    : False,
+            "vos_stats_fail_fields": [],
             "message_not_delivered": False,
             "fail_reason"          : [],
             "steps"                : [],
@@ -323,6 +343,248 @@ class BaseActivity:
         cap._is_match = _is_match
         cap.start()
         return cap
+
+    def _lef_parallel_eligible(self) -> bool:
+        """LEF can run in a worker thread alongside CASB AlertWindow validation."""
+        import config as _cfg
+        if getattr(_cfg, "LEF_SEQUENTIAL_ONLY", False):
+            return False
+        return bool(_cfg.ANALYTICS_HOST and _cfg.GATEWAY_NAME)
+
+    def _run_lef_verification_core(self, step_num: str):
+        """
+        Build LefVerifier + fetch_and_validate (SSH/paramiko only — safe for a worker thread).
+        Returns a payload dict for _apply_lef_payload.
+        """
+        import config as _cfg
+        from core.lef_verifier import LefVerifier
+
+        if not _cfg.ANALYTICS_HOST or not _cfg.GATEWAY_NAME:
+            return {"kind": "skip_config"}
+
+        exp = self.expected or {}
+        expected_app      = (exp.get("application") or _cfg.EXPECTED_APPLICATION or "").lower()
+        expected_activity = (exp.get("activity")    or _cfg.EXPECTED_ACTIVITY or "").lower()
+        pwd = _cfg.ANALYTICS_PWD or _cfg.SSH_PASSWORD
+
+        lef = LefVerifier(
+            host              = _cfg.ANALYTICS_HOST,
+            user              = _cfg.SSH_USER,
+            password          = pwd,
+            org               = _cfg.VOS_ORG_NAME,
+            gateway_name      = _cfg.GATEWAY_NAME,
+            script_dir        = self.script_dir,
+            casb_profile      = _cfg.VOS_CASB_PROFILE_NAME,
+            casb_rule         = _cfg.VOS_CASB_RULE_NAME,
+            casb_profile_rule = getattr(_cfg, "VOS_CASB_PROFILE_RULE_NAME", "") or "",
+            port              = _cfg.SSH_PORT,
+        )
+        lef_result = lef.fetch_and_validate(
+            tc_label          = step_num,
+            expected_app      = expected_app,
+            expected_activity = expected_activity,
+            expected_action   = "block",
+        )
+        return {
+            "kind":               "ok",
+            "lef":                lef,
+            "lef_result":         lef_result,
+            "expected_app":       expected_app,
+            "expected_activity":  expected_activity,
+        }
+
+    def _apply_lef_payload(self, result: dict, payload: dict, step_num: str) -> None:
+        """Merge LEF output into result + steps (call from main thread only)."""
+        if not payload:
+            return
+        if payload.get("kind") == "skip_config":
+            self._add_step(result, step_num, "LEF (casbLog + accessLog) Verification",
+                           "warn", ["LEF skipped -- --analytics-host or --gateway-name not provided"])
+            result["lef_confirmed"] = False
+            result["lef_skipped"]   = True
+            return
+
+        lef_result = payload["lef_result"]
+        lef        = payload["lef"]
+        exp_app    = payload["expected_app"]
+        exp_act    = payload["expected_activity"]
+
+        result["lef_confirmed"]      = lef_result["lef_confirmed"]
+        result["lef_skipped"]        = lef_result["lef_skipped"]
+        result["lef_matched_lines"]  = lef_result["matched_lines"]
+        result["access_confirmed"]   = lef_result.get("access_confirmed", False)
+
+        casb_ok    = lef_result["lef_confirmed"]
+        access_ok  = lef_result.get("access_confirmed", False)
+        skipped    = lef_result["lef_skipped"]
+        acc_lines  = int(lef_result.get("access_line_count", 0))
+
+        acc_label = (
+            "CONFIRMED" if access_ok else (
+                "NOT FOUND / MISMATCH" if acc_lines else "NO LINES"
+            )
+        )
+        both_ok = casb_ok and access_ok and not skipped
+
+        details = [
+            f"Analytics host   : {lef.host}",
+            f"Org              : {lef.org}",
+            f"Gateway          : {lef.gateway_name}",
+            "--- casbLog ---",
+            f"Matching lines   : {len(lef_result['matched_lines'])}",
+            f"Expected app     : casbAppName={exp_app}",
+            f"Expected activity: casbAppActivity={exp_act}",
+            f"Expected action  : casbAction=block",
+            f"casbLog result   : {'CONFIRMED' if casb_ok else 'NOT FOUND / FIELD MISMATCH'}",
+        ] + [f"Match: {ln[:150]}" for ln in lef_result["matched_lines"]]
+        acc_raw = lef_result.get("access_log_lines") or []
+        details += [
+            "--- accessLog ---",
+            f"Lines found      : {acc_lines}",
+            f"accessLog result : {acc_label}",
+        ] + [f"Match: {ln[:150]}" for ln in acc_raw]
+        details += [
+            f"OVERALL          : {'VERIFIED (casbLog + accessLog)' if both_ok else 'FAILED'}",
+        ]
+
+        step_status = (
+            "warn" if skipped else "pass" if both_ok else "fail"
+        )
+        self._add_step(result, step_num, "LEF (casbLog + accessLog) Verification", step_status, details)
+
+        if not skipped:
+            if not casb_ok:
+                result["fail_reason"].append(
+                    f"LEF casbLog: no match for app={exp_app}, "
+                    f"activity={exp_act}, action=block"
+                )
+            if not access_ok:
+                result["fail_reason"].append(
+                    "LEF accessLog: not confirmed (rule/gateway/tenant/fromUser mismatch or no lines)"
+                )
+
+    def _run_casb_popup_with_lef_parallel(self, page, result: dict, tc_label: str) -> bool:
+        """
+        CASB AlertWindow validation on the main thread; LEF (Analytics SSH) in a
+        background thread when eligible.
+
+        Returns:
+            True  — LEF merged here (do not call _finish_lef_verification again)
+            False — popup only; LEF runs later after fast.log
+        """
+        import config as _cfg
+        lef_step = f"{tc_label}-lef"
+        if not self._lef_parallel_eligible():
+            self._wait_casb_popup(page, result, tag=tc_label)
+            return False
+
+        holder: dict = {}
+
+        def _worker():
+            try:
+                holder["payload"] = self._run_lef_verification_core(lef_step)
+            except Exception as e:
+                holder["exc"] = e
+
+        t = threading.Thread(target=_worker, name="lef-casblog-analytics", daemon=True)
+        t.start()
+        print("   [LEF] casbLog verification running in parallel with CASB AlertWindow", flush=True)
+
+        self._wait_casb_popup(page, result, tag=tc_label)
+
+        join_s = int(getattr(_cfg, "CASB_POPUP_WAIT_TIMEOUT", 180)) + 150
+        t.join(timeout=join_s)
+        if t.is_alive():
+            print(f"   [LEF] WARNING: LEF thread still running after {join_s}s (join continued)", flush=True)
+
+        if holder.get("exc") is not None:
+            err = holder["exc"]
+            print(f"   [LEF] Thread error: {err}", flush=True)
+            result["fail_reason"].append(f"LEF thread error: {err}")
+            self._add_step(
+                result, lef_step, "LEF (casbLog) Verification", "fail",
+                [f"Exception: {err}"],
+            )
+            result["lef_confirmed"] = False
+            result["lef_skipped"]   = True
+        else:
+            self._apply_lef_payload(result, holder.get("payload") or {"kind": "skip_config"}, lef_step)
+        return True
+
+    def _finish_lef_verification(self, result: dict, step_num: str = "lef"):
+        """LEF after fast.log when parallel mode did not run (or sequential-only)."""
+        p = self._run_lef_verification_core(step_num)
+        self._apply_lef_payload(result, p, step_num)
+
+    def _finish_session_verification(self, result: dict, tc_label: str):
+        """Parse vos_dump and verify session extensive fields."""
+        from core.session_verifier import verify_session_extensive
+        import config as _cfg
+        exp = self.expected or {}
+        expected_app = (exp.get("application") or _cfg.EXPECTED_APPLICATION or "").lower()
+
+        sv = verify_session_extensive(
+            script_dir   = self.script_dir,
+            tc_label     = tc_label,
+            expected_app = expected_app,
+        )
+
+        result["session_verified"]    = sv["confirmed"]
+        result["session_skipped"]     = sv["skipped"]
+        result["session_fail_fields"] = sv["fail_fields"]
+
+        details = [f"Dump file : {sv['dump_file']}"] if sv["dump_file"] else ["No vos_dump file found"]
+        for field, (actual, expected, passed) in sv["checks"].items():
+            status = "PASS" if passed else "FAIL"
+            details.append(f"[{status}] {field:<26} = {actual}  (expected: {expected})")
+
+        step_status = ("warn" if sv["skipped"] else
+                       "pass" if sv["confirmed"] else "fail")
+        self._add_step(result, f"{tc_label}-session", "Session Extensive Verification",
+                       step_status, details)
+
+        if not sv["confirmed"] and not sv["skipped"]:
+            result["fail_reason"].append(
+                f"Session verification failed: {chr(44).join(sv['fail_fields'])}"
+            )
+
+    def _finish_vos_stats_verification(self, result: dict, tc_label: str):
+        """Parse vos_dump and validate CASB/decrypt counters + appid report_metadata."""
+        from core.vos_stats_verifier import verify_vos_stats
+        import config as _cfg
+
+        # qosmos: True = enabled, False = disabled
+        qosmos_enabled = _cfg.VOS_APPID_REPORT_METADATA.lower() == "enable"
+
+        sv = verify_vos_stats(
+            script_dir       = self.script_dir,
+            tc_label         = tc_label,
+            casb_profile     = _cfg.VOS_CASB_PROFILE_NAME,
+            casb_rule        = _cfg.VOS_CASB_PROFILE_INSTAGRAM_RULE_NAME or _cfg.VOS_CASB_RULE_NAME,
+            casb_access_rule = _cfg.VOS_CASB_RULE_NAME,
+            decrypt_rule     = _cfg.VOS_DECRYPTION_RULE_NAME,
+            decrypt_profile  = _cfg.VOS_DECRYPT_PROFILE_NAME,
+            qosmos           = qosmos_enabled,
+        )
+
+        result["vos_stats_verified"]  = sv["confirmed"]
+        result["vos_stats_skipped"]   = sv["skipped"]
+        result["vos_stats_fail_fields"] = sv["fail_fields"]
+
+        details = [f"Dump file : {sv['dump_file']}"] if sv["dump_file"] else ["No vos_dump file found"]
+        for field, (actual, expected, passed) in sv["checks"].items():
+            status = "PASS" if passed else "FAIL"
+            details.append(f"[{status}] {field:<25} = {actual:<10}  (expected: {expected})")
+
+        step_status = ("warn" if sv["skipped"] else
+                       "pass" if sv["confirmed"] else "fail")
+        self._add_step(result, f"{tc_label}-vos-stats", "VOS Stats Verification",
+                       step_status, details)
+
+        if not sv["confirmed"] and not sv["skipped"]:
+            result["fail_reason"].append(
+                f"VOS stats failed: {chr(44).join(sv['fail_fields'])}"
+            )
 
     def _finish_log_capture(self, cap, result: dict, step_num=None):
         """Stop capture, validate, record step, update result."""
@@ -513,4 +775,19 @@ class BaseActivity:
             "status"       : result.get("status", "FAIL"),
             "fail_reason"  : result.get("fail_reason", []),
             "steps"        : result.get("steps", []),
+            # session extensive fields
+            "session_verified"   : result.get("session_verified",  False),
+            "session_skipped"    : result.get("session_skipped",   False),
+            # VOS stats fields
+            "vos_stats_verified" : result.get("vos_stats_verified", False),
+            "vos_stats_skipped"  : result.get("vos_stats_skipped",  False),
+            # LEF fields
+            "lef_confirmed"      : result.get("lef_confirmed",   False),
+            "lef_skipped"        : result.get("lef_skipped",     False),
+            "access_confirmed"   : result.get("access_confirmed", False),
+            # fast.log fields
+            "fast_log_confirmed" : result.get("fast_log_confirmed", False),
+            "fast_log_skipped"   : result.get("fast_log_skipped",  False),
+            "fast_log_sig_ids"   : result.get("fast_log_sig_ids",  []),
+            "false_sig_ids"      : result.get("false_sig_ids",     []),
         })
