@@ -16,6 +16,8 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import quote
 
+from core.vos_info_dump import vos_dump_file_stem_from_result
+
 _API_BASE                = "https://teams.live.com/api/chatsvc/consumer/v1"
 _TC3_SOURCE_CHAT         = "AMRUTA LONI"
 _TC3_FORWARD_MESSAGE     = "this is sent text for forward"
@@ -71,7 +73,7 @@ class PostMixin:
         if not typed:
             result["fail_reason"].append("Could not type message in chat"); return False
 
-        vsmd_prep, har = self._before_send(page, "TC1_BaseSendPost")
+        vsmd_prep, har = self._before_send(page, vos_dump_file_stem_from_result(result))
         result["_har"] = har
 
         sent = False
@@ -81,7 +83,7 @@ class PostMixin:
             page.keyboard.press("Control+Enter"); sent = True
 
         page.wait_for_timeout(3000)
-        self._after_send(page, result, vsmd_prep, har, "TC1_BaseSendPost", None)
+        self._after_send(page, result, vsmd_prep, har, vos_dump_file_stem_from_result(result), None)
 
         ss, _ = self._screenshot(page, "TC1_step1_sent")
         self._add_step(result, "TC1-b", f"Message Sent to {recipient}",
@@ -176,7 +178,7 @@ class PostMixin:
         if not typed:
             result["fail_reason"].append("Could not type in meeting chat"); return False
 
-        vsmd_prep, har = self._before_send(page, "TC2_MeetNowPost")
+        vsmd_prep, har = self._before_send(page, vos_dump_file_stem_from_result(result))
         result["_har"] = har
 
         sent = False
@@ -189,7 +191,7 @@ class PostMixin:
             page.keyboard.press("Enter"); sent = True
 
         page.wait_for_timeout(3000)
-        self._after_send(page, result, vsmd_prep, har, "TC2_MeetNowPost", None)
+        self._after_send(page, result, vsmd_prep, har, vos_dump_file_stem_from_result(result), None)
 
         ss3, _ = self._screenshot(page, "TC2_step3_message_sent")
         self._add_step(result, "TC2-d", "Message Posted in Meeting Chat",
@@ -198,46 +200,111 @@ class PostMixin:
         if not sent:
             result["fail_reason"].append("Could not send message in meeting chat"); return False
 
-        delivered = False; blocked = False
+        delivered = False
+        is_pending_ui = False
+        has_ts = False
+        has_sent_check = False
         detail = "Delivery status inconclusive — assuming CASB blocked"
         try:
             page.wait_for_timeout(3000)
-            bubble = page.evaluate(f"""
-                () => {{
-                    const bubbles = document.querySelectorAll('[data-tid="chat-pane-message"]');
-                    for (const el of bubbles) {{
+            bubble = page.evaluate(
+                """
+                (msg) => {
+                    function analyzeMyMessage(row, bubbleEl) {
+                        const scope = row || bubbleEl;
+                        if (!scope) return null;
+                        const html = (scope.outerHTML || '').toLowerCase();
+                        const text = (scope.innerText || '').toLowerCase();
+
+                        let pending = text.includes('sending') || html.includes('retrying');
+
+                        let sentCheck = false;
+                        const icons = scope.querySelectorAll('i[data-icon-name], svg[data-icon-name]');
+                        for (const node of icons) {
+                            const n = (node.getAttribute('data-icon-name') || '').toLowerCase();
+                            if (!n) continue;
+                            if (n.includes('check') && (n.includes('circle') || n.includes('skype')))
+                                sentCheck = true;
+                            if (n.includes('circlering') || n.includes('statuscirclering')
+                                || n.includes('statuscircleouter'))
+                                pending = true;
+                        }
+
+                        let ts = false;
+                        if (row && row.querySelector('time[datetime]')) ts = true;
+                        else if (bubbleEl && bubbleEl.querySelector('time[datetime]')) ts = true;
+
+                        if (pending && sentCheck) pending = false;
+
+                        return {
+                            pending,
+                            hasTimestamp: ts,
+                            hasSentCheck: sentCheck,
+                        };
+                    }
+
+                    /* Consumer chat: [data-tid="chat-pane-message"] + [data-message-content] */
+                    for (const el of document.querySelectorAll('[data-tid="chat-pane-message"]')) {
                         const c = el.querySelector('[data-message-content]');
-                        if (c && c.innerText.includes({repr(message)})) {{
-                            const w = el.closest('.fui-ChatMyMessage') || el.parentElement;
-                            return {{ bubbleHtml: el.outerHTML, wrapperHtml: w ? w.outerHTML : el.outerHTML }};
-                        }}
-                    }} return null;
-                }}""")
+                        if (!c || !c.innerText.includes(msg)) continue;
+                        const row = el.closest('[class*="ChatMyMessage"]')
+                            || el.closest('[class*="chatMyMessage"]');
+                        const r = analyzeMyMessage(row, el);
+                        if (r) return r;
+                    }
+
+                    /* Meeting / PWA: captures show [data-testid="message-wrapper"]; body in role=heading */
+                    for (const wrap of document.querySelectorAll('[data-testid="message-wrapper"]')) {
+                        if (!wrap.innerText.includes(msg)) continue;
+                        const row = wrap.querySelector('[class*="ChatMyMessage"]')
+                            || wrap.querySelector('[class*="chatMyMessage"]');
+                        const r = analyzeMyMessage(row || wrap, wrap);
+                        if (r) return r;
+                    }
+
+                    return null;
+                }
+                """,
+                message,
+            )
             if bubble is None:
-                blocked = True; detail = "Message bubble not found — CASB blocked ✓"
+                detail = "Message bubble not found — CASB blocked ✓"
                 result["message_not_delivered"] = True
             else:
-                w = (bubble.get("wrapperHtml") or "").lower()
-                is_hollow = 'aria-label="retrying' in w or 'retrying...' in w
-                has_ts    = 'fui-chatmymessage__timestamp' in w or ('<time' in w and 'datetime=' in w)
-                if is_hollow and not has_ts:
-                    blocked = True; detail = "Hollow circle, no timestamp → CASB block CONFIRMED ✓"
+                is_pending_ui = bool(bubble.get("pending"))
+                has_ts = bool(bubble.get("hasTimestamp"))
+                has_sent_check = bool(bubble.get("hasSentCheck"))
+                if is_pending_ui:
+                    detail = "Sending / hollow status or no sent check → not delivered — CASB blocked ✓"
                     result["message_not_delivered"] = True
-                elif has_ts and not is_hollow:
-                    delivered = True; detail = "Timestamp present → DELIVERED — CASB did NOT block ✗"
+                elif has_sent_check or (has_ts and not is_pending_ui):
+                    delivered = True
+                    detail = "Sent check or per-message timestamp → DELIVERED — CASB did NOT block ✗"
                     result["message_not_delivered"] = False
-                    result["fail_reason"].append("Meeting chat message was delivered — CASB did not block")
+                    result["fail_reason"].append(
+                        "Meeting chat message was delivered — CASB did not block"
+                    )
                 else:
-                    blocked = True; detail = "Status ambiguous — treating as blocked ✓"
+                    detail = "No sent check and no per-message timestamp — treating as blocked ✓"
                     result["message_not_delivered"] = True
         except Exception as e:
             detail = f"Delivery check error: {e} — assuming blocked"
             result["message_not_delivered"] = True
 
         ss4, _ = self._screenshot(page, "TC2_step4_delivery_check")
-        self._add_step(result, "TC2-e", "Message Delivery Check (Meeting Chat)",
-                       "pass" if result["message_not_delivered"] else "fail",
-                       [detail, f"Hollow circle: {blocked}", f"Timestamp: {delivered}"], ss4)
+        self._add_step(
+            result,
+            "TC2-e",
+            "Message Delivery Check (Meeting Chat)",
+            "pass" if result["message_not_delivered"] else "fail",
+            [
+                detail,
+                f"pending/sending UI: {is_pending_ui}",
+                f"has per-msg time: {has_ts}",
+                f"sent check icon: {has_sent_check}",
+            ],
+            ss4,
+        )
         return True
 
     def _dismiss_meeting_popups(self, page):
@@ -279,6 +346,8 @@ class PostMixin:
             result["fail_reason"].append(f"Could not open source chat: {source_chat_name}"); return False
 
         source_thread_id = self._extract_thread_id(page, source_chat_name)
+        if not source_thread_id:
+            source_thread_id = self._find_thread_id_via_api(page, source_chat_name)
         self._add_step(result, "TC3-b", "Extracted source thread ID",
                        "pass" if source_thread_id else "warn",
                        [f"Thread ID : {source_thread_id or 'not found'}"])
@@ -315,7 +384,7 @@ class PostMixin:
             self._click_chat_by_name(page, source_chat_name)
             page.wait_for_timeout(2000)
 
-        vsmd_prep, har = self._before_send(page, "TC3_ForwardMessage")
+        vsmd_prep, har = self._before_send(page, vos_dump_file_stem_from_result(result))
         result["_har"] = har
 
         api_status, api_error = self._call_forward_api(
@@ -324,7 +393,7 @@ class PostMixin:
         )
         sent = api_status in (200, 201, 202, 403, "CASB_BLOCKED")
         page.wait_for_timeout(3000)
-        self._after_send(page, result, vsmd_prep, har, "TC3_ForwardMessage", None)
+        self._after_send(page, result, vsmd_prep, har, vos_dump_file_stem_from_result(result), None)
 
         ss_f, _ = self._screenshot(page, "TC3_step2_api_called")
         self._add_step(result, "TC3-f", "Forward API called",
@@ -421,6 +490,8 @@ class PostMixin:
             result["fail_reason"].append(f"Could not open chat: {_TC4_REPLY_CHAT}"); return False
 
         thread_id = self._extract_thread_id(page, _TC4_REPLY_CHAT)
+        if not thread_id:
+            thread_id = self._find_thread_id_via_api(page, _TC4_REPLY_CHAT)
         self._add_step(result, "TC4-b", "Thread ID", "pass" if thread_id else "warn",
                        [f"ID: {thread_id or 'not found'}"])
         if not thread_id:
@@ -433,7 +504,7 @@ class PostMixin:
             result["fail_reason"].append("No message ID"); return False
 
         self._hover_message_and_click_reply(page, target_msg)
-        vsmd_prep, har = self._before_send(page, "TC4_ReplyMessage")
+        vsmd_prep, har = self._before_send(page, vos_dump_file_stem_from_result(result))
         result["_har"] = har
 
         api_status, api_error = self._call_reply_api(
@@ -443,7 +514,7 @@ class PostMixin:
         )
         sent = api_status in (200, 201, 202, 403, "CASB_BLOCKED")
         page.wait_for_timeout(3000)
-        self._after_send(page, result, vsmd_prep, har, "TC4_ReplyMessage", None)
+        self._after_send(page, result, vsmd_prep, har, vos_dump_file_stem_from_result(result), None)
         ss_c, _ = self._screenshot(page, "TC4_step3_api")
         self._add_step(result, "TC4-e", "Reply API", "pass" if sent else "fail",
                        [f"HTTP: {api_status}", f"Text: {reply_text[:50]}"], ss_c)
@@ -577,6 +648,8 @@ class PostMixin:
         if not ok: result["fail_reason"].append("Posts tab failed"); return False
 
         thread_id = self._extract_thread_id(page, _TC5_COMMUNITY_NAME)
+        if not thread_id:
+            thread_id = self._find_thread_id_via_api(page, _TC5_COMMUNITY_NAME)
         self._add_step(result, "TC5-e", "Thread ID", "pass" if thread_id else "warn",
                        [f"ID: {thread_id or 'not yet'}"])
 
@@ -617,10 +690,13 @@ class PostMixin:
                        [f"File: {os.path.basename(_TC5_FILE_PATH)}",
                         f"Uploaded: {'Yes' if upload_ok else 'Pending'}"], ss)
 
-        if not thread_id: thread_id = self._extract_thread_id(page, _TC5_COMMUNITY_NAME)
+        if not thread_id:
+            thread_id = self._extract_thread_id(page, _TC5_COMMUNITY_NAME)
+        if not thread_id:
+            thread_id = self._find_thread_id_via_api(page, _TC5_COMMUNITY_NAME)
         if not thread_id: result["fail_reason"].append("No thread ID"); return False
 
-        vsmd_prep, har = self._before_send(page, "TC5_CommunityPost")
+        vsmd_prep, har = self._before_send(page, vos_dump_file_stem_from_result(result))
         result["_har"] = har
         graph_data = file_meta.get("graph_response", {})
         files_json = self._build_file_metadata(graph_data, _TC5_FILE_PATH)
@@ -629,7 +705,7 @@ class PostMixin:
             page=page, thread_id=thread_id, subject=subject, files_json=files_json)
         sent = api_status in (200, 201, 202, 403, "CASB_BLOCKED")
         page.wait_for_timeout(3000)
-        self._after_send(page, result, vsmd_prep, har, "TC5_CommunityPost", None)
+        self._after_send(page, result, vsmd_prep, har, vos_dump_file_stem_from_result(result), None)
         ss, _ = self._screenshot(page, "TC5_step12")
         self._add_step(result, "TC5-i", "Community post API", "pass" if sent else "fail",
                        [f"HTTP: {api_status}", f"Subject: {subject}"], ss)

@@ -516,7 +516,9 @@ class BaseActivity:
         p = self._run_lef_verification_core(step_num)
         self._apply_lef_payload(result, p, step_num)
 
-    def _finish_session_verification(self, result: dict, tc_label: str):
+    def _finish_session_verification(
+        self, result: dict, tc_label: str, dump_stem=None
+    ):
         """Parse vos_dump and verify session extensive fields."""
         from core.session_verifier import verify_session_extensive
         import config as _cfg
@@ -527,6 +529,7 @@ class BaseActivity:
             script_dir   = self.script_dir,
             tc_label     = tc_label,
             expected_app = expected_app,
+            dump_stem    = dump_stem,
         )
 
         result["session_verified"]    = sv["confirmed"]
@@ -548,7 +551,9 @@ class BaseActivity:
                 f"Session verification failed: {chr(44).join(sv['fail_fields'])}"
             )
 
-    def _finish_vos_stats_verification(self, result: dict, tc_label: str):
+    def _finish_vos_stats_verification(
+        self, result: dict, tc_label: str, dump_stem=None
+    ):
         """Parse vos_dump and validate CASB/decrypt counters + appid report_metadata."""
         from core.vos_stats_verifier import verify_vos_stats
         import config as _cfg
@@ -556,15 +561,24 @@ class BaseActivity:
         # qosmos: True = enabled, False = disabled
         qosmos_enabled = _cfg.VOS_APPID_REPORT_METADATA.lower() == "enable"
 
+        # Profile stats rows use the *sub-rule* inside the CASB profile (e.g.
+        # ms_teams_automation), not the access-policy rule (mobile_test_rule).
+        casb_profile_subrule = (
+            (_cfg.VOS_CASB_PROFILE_INSTAGRAM_RULE_NAME or "").strip()
+            or (_cfg.VOS_CASB_PROFILE_RULE_NAME or "").strip()
+            or (_cfg.VOS_CASB_RULE_NAME or "").strip()
+        )
+
         sv = verify_vos_stats(
             script_dir       = self.script_dir,
             tc_label         = tc_label,
             casb_profile     = _cfg.VOS_CASB_PROFILE_NAME,
-            casb_rule        = _cfg.VOS_CASB_PROFILE_INSTAGRAM_RULE_NAME or _cfg.VOS_CASB_RULE_NAME,
+            casb_rule        = casb_profile_subrule,
             casb_access_rule = _cfg.VOS_CASB_RULE_NAME,
             decrypt_rule     = _cfg.VOS_DECRYPTION_RULE_NAME,
             decrypt_profile  = _cfg.VOS_DECRYPT_PROFILE_NAME,
             qosmos           = qosmos_enabled,
+            dump_stem        = dump_stem,
         )
 
         result["vos_stats_verified"]  = sv["confirmed"]

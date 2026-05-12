@@ -42,6 +42,22 @@ import config as _cfg
 OUTPUT_FILENAME = "vos_info_dump.txt"
 
 
+def vos_dump_file_stem(tc_label: str, activity_name: str) -> str:
+    """
+    Basename stem for ``vos_dumps/{stem}_vos_dump.txt``.
+
+    Use this anywhere apps pass a ``tc_name`` / poller label so it stays aligned with
+    :func:`run_vos_info_dump`, :func:`_append_session_output`, and session / VOS-stats
+    ``dump_stem`` verification (same stem as ``runner.py``: ``tc_label`` + ``"_"`` + ``activity_name``).
+    """
+    return f"{tc_label}_{activity_name}"
+
+
+def vos_dump_file_stem_from_result(result: dict) -> str:
+    """Same as :func:`vos_dump_file_stem` for a TC ``result`` from activity run (tc_label + activity_name)."""
+    return vos_dump_file_stem(result["tc_label"], result["activity_name"])
+
+
 # ------------------------------------------------------------
 # SSH HELPERS
 # ------------------------------------------------------------

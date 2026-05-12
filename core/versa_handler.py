@@ -7,6 +7,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 import time
 import threading
+
 import paramiko
 
 from config import (
@@ -368,9 +369,10 @@ def capture_popup_screenshot(win, script_dir: str, tag: str = ""):
     """
     Capture a screenshot of the Versa AlertWindow popup.
     Tries three methods in order:
-      1. pywinauto capture_as_image()      — cleanest, window only
-      2. PIL ImageGrab.grab(bbox)          — crop from full screen using window rect
-      3. Full screen fallback              — last resort
+      1. ``PrintWindow`` (win32ui + ``PW_RENDERFULLCONTENT``, then legacy flags) —
+         works when the popup is not foregrounded; preferred for CASB toasts/modals.
+      2. pywinauto ``capture_as_image()`` on the window handle.
+      3. PIL ``ImageGrab.grab(bbox=…)`` using the window rectangle.
     Saves PNG to script_dir, returns (base64_str, filepath).
     Returns (None, None) on failure.
     """
@@ -385,11 +387,10 @@ def capture_popup_screenshot(win, script_dir: str, tag: str = ""):
     filepath = os.path.join(script_dir, filename)
     img = None
 
-    # ── Method 1: PrintWindow via win32ui (works without active desktop) ──
+    # ── Method 1: PrintWindow via win32ui (preferred — works without active desktop) ──
     try:
         import win32gui
         import win32ui
-        import win32con
         from PIL import Image
         import ctypes
 
@@ -398,14 +399,28 @@ def capture_popup_screenshot(win, script_dir: str, tag: str = ""):
         w = max(rect[2] - rect[0], 1)
         h = max(rect[3] - rect[1], 1)
 
-        hwnd_dc  = win32gui.GetWindowDC(hwnd)
-        mfc_dc   = win32ui.CreateDCFromHandle(hwnd_dc)
-        save_dc  = mfc_dc.CreateCompatibleDC()
-        bitmap   = win32ui.CreateBitmap()
+        hwnd_dc = win32gui.GetWindowDC(hwnd)
+        mfc_dc  = win32ui.CreateDCFromHandle(hwnd_dc)
+        save_dc = mfc_dc.CreateCompatibleDC()
+        bitmap  = win32ui.CreateBitmap()
         bitmap.CreateCompatibleBitmap(mfc_dc, w, h)
         save_dc.SelectObject(bitmap)
-        # PW_RENDERFULLCONTENT=2 — works even when window is backgrounded
-        result_flag = ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 2)
+
+        # PW_RENDERFULLCONTENT=2 (Win 8.1+); then 0 / PW_CLIENTONLY=1 for older builds.
+        pw_flags = (
+            (2, "PW_RENDERFULLCONTENT(2)"),
+            (0, "PrintWindow(0)"),
+            (1, "PW_CLIENTONLY(1)"),
+        )
+        result_flag = 0
+        used_lbl = ""
+        for flag, lbl in pw_flags:
+            result_flag = int(
+                ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), int(flag))
+            )
+            used_lbl = lbl
+            if result_flag:
+                break
 
         bmpinfo = bitmap.GetInfo()
         bmpstr  = bitmap.GetBitmapBits(True)
@@ -417,9 +432,12 @@ def capture_popup_screenshot(win, script_dir: str, tag: str = ""):
         win32gui.ReleaseDC(hwnd, hwnd_dc)
 
         if result_flag:
-            print(f"   [POPUP SS] Method 1 (PrintWindow) succeeded")
+            print(f"   [POPUP SS] Method 1 (PrintWindow) succeeded via {used_lbl}")
         else:
-            print(f"   [POPUP SS] Method 1 (PrintWindow) returned 0 — image may be blank, keeping anyway")
+            print(
+                f"   [POPUP SS] Method 1 (PrintWindow) all flags returned 0 "
+                f"(last={used_lbl}) — image may be blank; keeping for fallback chain"
+            )
     except Exception as e:
         print(f"   [POPUP SS] Method 1 failed: {e}")
 
@@ -470,9 +488,9 @@ def find_versa_popup():
                 if (win.window_text() == "AlertWindow" and
                         "VersaSecureAccessClient.Alerts" in win.class_name()):
                     return win
-            except:
+            except Exception:
                 continue
-    except:
+    except Exception:
         pass
     return None
 
@@ -523,7 +541,11 @@ def extract_popup_data(win):
                 popup_data["application"] = text
             elif "instagram" in t:
                 popup_data["application"] = text
+            elif "trello" in t:
+                popup_data["application"] = text
             elif t == "post":
+                popup_data["activity"] = text
+            elif t == "logout" or "logout" in t:
                 popup_data["activity"] = text
             elif "teams.live.com" in t or "teams.microsoft.com" in t:
                 popup_data["url"] = text
@@ -553,6 +575,20 @@ def validate_popup_data(popup_data):
     full_lower        = popup_data["full_text"].lower()
     application_match = exp_app.lower() in full_lower
     activity_match    = exp_act.lower() in full_lower
+    ea = (exp_act or "").lower().strip()
+    # Versa UI strings vs YAML (Trello logout, download/upload activities).
+    if not activity_match and ea == "logout":
+        activity_match = any(
+            x in full_lower for x in ("logout", "log out", "sign out", "sign-out")
+        )
+    if not activity_match and ea == "download_file":
+        activity_match = ("download_file" in full_lower) or (
+            "download" in full_lower and "trello" in full_lower
+        )
+    if not activity_match and ea == "upload_file":
+        activity_match = ("upload_file" in full_lower) or (
+            "upload" in full_lower and "trello" in full_lower
+        )
     by_casb           = exp_blk.lower() in full_lower
     by_other          = any(x in full_lower for x in ["atp", "ip filter", "ipfilter", "threat protection"])
     blocked_by_casb   = by_casb and not by_other
@@ -568,85 +604,34 @@ def validate_popup_data(popup_data):
 
 
 def wait_until_popup_appears(timeout_seconds=None):
-    """
-    Block until the Versa AlertWindow (CASB block page) appears.
-    
-    Args:
-        timeout_seconds: Max seconds to wait. If None, uses CASB_POPUP_WAIT_TIMEOUT from config.
-    
-    Returns:
-        The window object if popup appears within timeout.
-        None if timeout occurs (graceful failure, allows TC to continue).
-    """
+    """Poll until the classic Versa AlertWindow appears (or timeout)."""
     if timeout_seconds is None:
-        timeout_seconds = CASB_POPUP_WAIT_TIMEOUT  # Default: 180 seconds (3 minutes)
-    
-    print(f"   Watching for Versa AlertWindow (timeout: {timeout_seconds}s / {timeout_seconds//60}m)...")
-    elapsed = 0
-    deadline = time.time() + timeout_seconds
-    
-    while time.time() < deadline:
+        timeout_seconds = CASB_POPUP_WAIT_TIMEOUT
+    print(f"   Watching for Versa AlertWindow (timeout: {timeout_seconds}s)...")
+    start_time = time.time()
+    poll_s = 0.2
+    while time.time() - start_time < timeout_seconds:
         win = find_versa_popup()
         if win:
-            print(f"   ✓ Versa AlertWindow (CASB block page) found after {elapsed}s!")
+            print("   ✓ Versa AlertWindow (CASB block page) appeared!")
             return win
-        
-        remaining = int(deadline - time.time())
-        elapsed += 1
-        time.sleep(1)
-        
-        # Print progress every 30 seconds
-        if elapsed % 30 == 0:
-            print(f"   [{elapsed}s] Still waiting for CASB popup... ({remaining}s remaining)")
-    
-    # Timeout reached - popup never appeared
-    error_msg = (
-        f"TIMEOUT: Versa AlertWindow (CASB block page) did not appear "
-        f"within {timeout_seconds}s ({timeout_seconds//60}m)."
-    )
-    print(f"\n   ✗ {error_msg}\n")
-    # FIXED: Return None instead of raising exception
-    # This allows try-except in teams_activities.py to catch it gracefully
+        time.sleep(poll_s)
+    print(f"\n   ✗ TIMEOUT: Versa AlertWindow did not appear within {timeout_seconds}s\n")
     return None
 
 
 def wait_until_popup_disappears(timeout_seconds=None):
-    """
-    Block until the Versa AlertWindow (CASB block page) auto-expires.
-    
-    Args:
-        timeout_seconds: Max seconds to wait. If None, uses CASB_POPUP_DISAPPEAR_TIMEOUT from config.
-    
-    Returns:
-        The number of seconds elapsed before popup auto-expired.
-        -1 if timeout occurs (graceful failure, allows TC to continue).
-    """
+    """Poll until the AlertWindow is gone (or timeout). Returns elapsed seconds or -1."""
     if timeout_seconds is None:
-        timeout_seconds = CASB_POPUP_DISAPPEAR_TIMEOUT  # Default: 180 seconds (3 minutes)
-    
-    print(f"   Waiting for Versa AlertWindow to AUTO-EXPIRE (timeout: {timeout_seconds}s / {timeout_seconds//60}m)...")
-    elapsed = 0
-    deadline = time.time() + timeout_seconds
-    
-    while time.time() < deadline:
+        timeout_seconds = CASB_POPUP_DISAPPEAR_TIMEOUT
+    print(f"   Waiting for Versa AlertWindow to AUTO-EXPIRE (timeout: {timeout_seconds}s)...")
+    start_time = time.time()
+    poll_s = 0.2
+    while time.time() - start_time < timeout_seconds:
         if not find_versa_popup():
+            elapsed = int(time.time() - start_time)
             print(f"   ✓ Versa AlertWindow auto-expired after {elapsed}s.")
             return elapsed
-        
-        remaining = int(deadline - time.time())
-        elapsed += 1
-        time.sleep(1)
-        
-        # Print progress every 30 seconds or every 10 seconds in the last minute
-        if elapsed % 30 == 0 or (remaining <= 60 and elapsed % 10 == 0):
-            print(f"   [{elapsed}s] Popup still visible, waiting for auto-expiry... ({remaining}s remaining)")
-    
-    # Timeout reached - popup never disappeared
-    error_msg = (
-        f"TIMEOUT: Versa AlertWindow (CASB block page) did not auto-expire "
-        f"within {timeout_seconds}s ({timeout_seconds//60}m)."
-    )
-    print(f"\n   ✗ {error_msg}\n")
-    # FIXED: Return -1 instead of raising exception
-    # This allows try-except in teams_activities.py to catch it gracefully
+        time.sleep(poll_s)
+    print(f"\n   ✗ TIMEOUT: Versa AlertWindow did not auto-expire within {timeout_seconds}s\n")
     return -1

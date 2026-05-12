@@ -15,6 +15,7 @@ If any check fails → session_verified = False → TC fails.
 
 import os
 import re
+from typing import Optional
 
 
 # ── Patterns ──────────────────────────────────────────────────────────────────
@@ -38,20 +39,47 @@ SESSION_ACTION_MODULE_PATTERN = re.compile(
 )
 
 
-def _find_dump_file(script_dir: str, tc_label: str) -> str | None:
-    """Find the post vos_dump file for this TC label."""
+def _session_extensive_search_scope(content: str) -> str:
+    """
+    Prefer the inline poller block that contains `show vsf session handle extensive`.
+    Earlier file content can contain other `Appid =` lines; using the first `.search()`
+    on the whole file then yields wrong/empty matches.
+    """
+    marker = "SESSION INFO"
+    idx = content.find(marker)
+    if idx != -1:
+        return content[idx:]
+    return content
+
+
+def _find_dump_file(
+    script_dir: str, tc_label: str, dump_stem: Optional[str] = None
+) -> Optional[str]:
+    """Find vos_dump for this TC (exact stem preferred, same as VOS dump writer)."""
     dump_dir = os.path.join(script_dir, "vos_dumps")
     if not os.path.isdir(dump_dir):
         return None
-    # Look for TCx_post_vos_dump.txt or TCx_BaseSendPost_vos_dump.txt etc.
-    for f in sorted(os.listdir(dump_dir)):
-        if f.endswith("_vos_dump.txt") and tc_label.lower() in f.lower():
-            return os.path.join(dump_dir, f)
-    return None
+    if dump_stem:
+        exact = os.path.join(dump_dir, f"{dump_stem}_vos_dump.txt")
+        if os.path.isfile(exact):
+            return exact
+    candidates = [
+        f
+        for f in os.listdir(dump_dir)
+        if f.endswith("_vos_dump.txt") and tc_label.lower() in f.lower()
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda f: (-len(f), f))
+    return os.path.join(dump_dir, candidates[0])
 
 
-def verify_session_extensive(script_dir: str, tc_label: str,
-                              expected_app: str) -> dict:
+def verify_session_extensive(
+    script_dir: str,
+    tc_label: str,
+    expected_app: str,
+    dump_stem: Optional[str] = None,
+) -> dict:
     """
     Parse vos_dump file and validate session extensive fields.
 
@@ -68,7 +96,7 @@ def verify_session_extensive(script_dir: str, tc_label: str,
         fail_fields  : list of failed field names
         dump_file    : path used
     """
-    dump_file = _find_dump_file(script_dir, tc_label)
+    dump_file = _find_dump_file(script_dir, tc_label, dump_stem=dump_stem)
 
     if not dump_file:
         print(f"   [SESSION-VERIFY] No vos_dump file found for {tc_label}")
@@ -84,11 +112,13 @@ def verify_session_extensive(script_dir: str, tc_label: str,
     with open(dump_file, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
 
+    scope = _session_extensive_search_scope(content)
+
     checks = {}
 
     # ── 1. Offload APPID — must contain "http" AND end with expected_app ──────
     appid_val = ""
-    m = OFFLOAD_APPID_PATTERN.search(content)
+    m = OFFLOAD_APPID_PATTERN.search(scope)
     if m:
         appid_val = m.group(1).strip("[]")
 
@@ -107,7 +137,7 @@ def verify_session_extensive(script_dir: str, tc_label: str,
 
     # ── 2. session_action — must be "drop-session" ────────────────────────────
     action_val = ""
-    m = SESSION_ACTION_PATTERN.search(content)
+    m = SESSION_ACTION_PATTERN.search(scope)
     if m:
         action_val = m.group(1).strip()
 
@@ -119,7 +149,7 @@ def verify_session_extensive(script_dir: str, tc_label: str,
 
     # ── 3. session_action_module — must be "casb_tnt_scanner" ─────────────────
     module_val = ""
-    m = SESSION_ACTION_MODULE_PATTERN.search(content)
+    m = SESSION_ACTION_MODULE_PATTERN.search(scope)
     if m:
         module_val = m.group(1).strip()
 

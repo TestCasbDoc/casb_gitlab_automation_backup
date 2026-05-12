@@ -932,17 +932,27 @@ class BrowserMixin:
 
     def _extract_thread_id(self, page, chat_name: str) -> str:
         import re
+        from urllib.parse import unquote
         try:
-            m = re.search(r"conversations?[=/]([0-9a-fA-F:@._\-]+)", page.url, re.IGNORECASE)
-            if m:
-                tid = m.group(1).rstrip("/")
-                if len(tid) > 10: return tid
+            raw = page.url or ""
+            url = unquote(raw)
+            # Consumer IDs look like 19:uni01_xxx@thread.v2 — not hex-only (old regex missed them).
+            for pat in (
+                r"[#/]conversations/([^/?#&]+)",
+                r"conversations/([^/?#&]+)",
+            ):
+                m = re.search(pat, url, re.IGNORECASE)
+                if m:
+                    tid = unquote(m.group(1)).strip().rstrip("/")
+                    if tid and len(tid) > 10:
+                        return tid
         except Exception:
             pass
         for attr in ("data-thread-id", "data-conversation-id"):
             try:
                 val = page.locator(f"[{attr}]").first.get_attribute(attr)
-                if val and len(val) > 10: return val
+                if val and len(val) > 10:
+                    return unquote(val.strip())
             except Exception:
                 continue
         return ""
@@ -961,14 +971,35 @@ class BrowserMixin:
 
     def _find_thread_id_via_api(self, page, recipient_name: str) -> str:
         try:
-            url = "https://teams.live.com/api/chatsvc/consumer/v1/users/ME/conversations?startTime=0&pageSize=100&view=msnp24Equivalent"
+            url = (
+                "https://teams.live.com/api/chatsvc/consumer/v1/users/ME/conversations"
+                "?startTime=0&pageSize=200&view=msnp24Equivalent"
+            )
             resp = page.request.get(url, headers=self._api_headers(page))
-            if not resp.ok: return ""
+            if not resp.ok:
+                return ""
             name_lower = recipient_name.lower().strip()
-            for conv in resp.json().get("conversations", []):
-                topic = (conv.get("threadProperties", {}) or {}).get("topic", "") or ""
-                if name_lower in topic.lower():
-                    return conv.get("id", "")
+            if not name_lower:
+                return ""
+            for conv in resp.json().get("conversations", []) or []:
+                tid = (conv.get("id") or "").strip()
+                if not tid:
+                    continue
+                tp = conv.get("threadProperties") or {}
+                parts = [
+                    str(tp.get("topic") or ""),
+                    str(tp.get("title") or ""),
+                    str(conv.get("displayName") or conv.get("chatName") or conv.get("name") or ""),
+                ]
+                blob = " ".join(parts).lower()
+                if name_lower in blob:
+                    return tid
+                for mem in conv.get("members") or []:
+                    if not isinstance(mem, dict):
+                        continue
+                    disp = (mem.get("displayName") or mem.get("name") or "").lower()
+                    if name_lower in disp:
+                        return tid
         except Exception:
             pass
         return ""

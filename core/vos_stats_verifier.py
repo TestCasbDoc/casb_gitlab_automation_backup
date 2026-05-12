@@ -63,19 +63,27 @@ def _get_section_by_command(content: str, keyword: str) -> str:
     return ""
 
 
-def _find_vos_dump(script_dir: str, tc_label: str) -> Optional[str]:
+def _find_vos_dump(
+    script_dir: str, tc_label: str, dump_stem: Optional[str] = None
+) -> Optional[str]:
     """
     Resolve vos_dumps/*.txt for stats parsing.
 
-    Preferred naming per test-case index (varies by run):
-      TC1_post_vos_dump.txt, TC2_post_vos_dump.txt, ...
-    We take the first TC<n> in tc_label (e.g. TC1_BaseSendPost -> TC1) and
-    prefer <TCn>_post_vos_dump.txt when it exists. Fallback: files whose name
-    contains the full tc_label (legacy).
+    When ``dump_stem`` is set (e.g. ``TC2_meet_now_post``), use that exact file
+    first — matches ``run_vos_info_dump(f"{tc_label}_{activity_name}")`` output.
+
+    Otherwise (legacy): files whose name contains ``tc_label``; do **not**
+    prefer ``TCn_post_vos_dump.txt`` for every TCn (that steals TC2 Meet Now
+    dumps when a stray ``TC2_post_vos_dump.txt`` exists).
     """
     dump_dir = os.path.join(script_dir, "vos_dumps")
     if not os.path.isdir(dump_dir):
         return None
+
+    if dump_stem:
+        exact = os.path.join(dump_dir, f"{dump_stem}_vos_dump.txt")
+        if os.path.isfile(exact):
+            return exact
 
     tc_lower = (tc_label or "").lower()
     candidates: list[str] = [
@@ -84,27 +92,11 @@ def _find_vos_dump(script_dir: str, tc_label: str) -> Optional[str]:
         if f.endswith("_vos_dump.txt") and tc_lower in f.lower()
     ]
 
-    m = re.search(r"(TC\d+)", tc_label or "", re.I)
-    preferred: Optional[str] = None
-    if m:
-        tcn = m.group(1)
-        post_file = f"{tcn}_post_vos_dump.txt"
-        path_post = os.path.join(dump_dir, post_file)
-        if os.path.isfile(path_post):
-            preferred = post_file
-            if post_file not in candidates:
-                candidates.append(post_file)
-
     if not candidates:
         return None
 
-    def sort_key(f: str) -> tuple:
-        fl = f.lower()
-        if preferred and fl == preferred.lower():
-            return (0, f)
-        return (1 if "post" in fl else 2, f)
-
-    candidates.sort(key=sort_key)
+    # Prefer the most specific filename (e.g. TC2_meet_now_post over TC2_post).
+    candidates.sort(key=lambda f: (-len(f), f))
     return os.path.join(dump_dir, candidates[0])
 
 
@@ -117,8 +109,9 @@ def verify_vos_stats(
     decrypt_rule: str,
     decrypt_profile: str,
     qosmos: bool = True,
+    dump_stem: Optional[str] = None,
 ) -> dict:
-    dump_file = _find_vos_dump(script_dir, tc_label)
+    dump_file = _find_vos_dump(script_dir, tc_label, dump_stem=dump_stem)
 
     if not dump_file or not os.path.exists(dump_file):
         print(f"   [VOS-STATS] No vos_dump file found for {tc_label}", flush=True)
@@ -157,19 +150,65 @@ def verify_vos_stats(
         cnt >= 1,
     )
 
-    # 2. CASB Profile rule hit count
+    # 2. CASB Profile Statistics — user-defined profile row (e.g. casb_mobile_test_rule)
+    #    Versa prints: PROFILE NAME, DEFAULT PROFILE HIT CNT, RULE ACTION HIT CNT, then rules.
+    #    Pass only if at least one of those two counts is > 0; both 0 → fail.
     s = _get_section(content, "CASB Profile Statistics")
-    cnt = -1
-    if s:
-        m = re.search(rf"{re.escape(casb_rule)}\s+(\d+)", s, re.IGNORECASE)
-        cnt = int(m.group(1)) if m else -1
-    checks["casb_profile_rule_hit"] = (
-        str(cnt) if cnt >= 0 else "not found",
-        f">= 1 (rule: {casb_rule})",
-        cnt >= 1,
-    )
+    prof_row = (casb_profile or "").strip()
+    prof_default_cnt = -1
+    prof_rule_action_cnt = -1
+    if s and prof_row:
+        mprof = re.search(
+            rf"^\s*{re.escape(prof_row)}\s+(\d+)\s+(\d+)",
+            s,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if mprof:
+            prof_default_cnt = int(mprof.group(1))
+            prof_rule_action_cnt = int(mprof.group(2))
+    if prof_default_cnt >= 0 and prof_rule_action_cnt >= 0:
+        prof_max = max(prof_default_cnt, prof_rule_action_cnt)
+    else:
+        prof_max = -1
+    if prof_row:
+        # Show one number: effective hits (max of Versa's two columns), not "70/0".
+        prof_actual = str(prof_max) if prof_max >= 0 else "not found"
+        checks["casb_profile_stats_hit"] = (
+            prof_actual,
+            f"> 0 for profile {prof_row}",
+            prof_max > 0,
+        )
+    else:
+        checks["casb_profile_stats_hit"] = (
+            "not set",
+            "> 0 on profile row (0 = fail); set --casb-profile / VOS_CASB_PROFILE_NAME",
+            False,
+        )
 
-    # 3. Decrypt Rule hit count
+    # 3. CASB Profile — per-rule HIT CNT (e.g. ms_teams_automation under that profile)
+    #    Pass only if count > 0; 0 → fail.
+    cnt = -1
+    if casb_rule and s:
+        m = re.search(
+            rf"^\s*{re.escape(casb_rule)}\s+(\d+)",
+            s,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        cnt = int(m.group(1)) if m else -1
+    if casb_rule:
+        checks["casb_profile_rule_hit"] = (
+            str(cnt) if cnt >= 0 else "not found",
+            f"> 0 for rule (0 = fail): {casb_rule}",
+            cnt > 0,
+        )
+    else:
+        checks["casb_profile_rule_hit"] = (
+            "not set",
+            "> 0 for rule (0 = fail); set --casb-profile-rule / VOS_CASB_PROFILE_RULE_NAME",
+            False,
+        )
+
+    # 4. Decrypt Rule hit count
     s = _get_section(content, "Decrypt Rule Hit Count")
     cnt = -1
     if s:
@@ -185,7 +224,7 @@ def verify_vos_stats(
         cnt >= 1,
     )
 
-    # 4. Decrypt Profile ssl_pxy_url_decrypt counter
+    # 5. Decrypt Profile ssl_pxy_url_decrypt counter
     s = _get_section(content, "Decrypt Profile Stats")
     cnt = -1
     if s:
@@ -197,7 +236,7 @@ def verify_vos_stats(
         cnt >= 1,
     )
 
-    # 5. appid report_metadata
+    # 6. appid report_metadata
     exp_meta = "enabled" if qosmos else "disabled"
     s = _get_section(content, "appid report_metadata")
     meta_val = ""

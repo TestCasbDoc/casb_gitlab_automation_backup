@@ -126,6 +126,7 @@ def run_all(app_id: str, account_type: str, browser, script_dir: str,
     from core.vos_info_dump import (
         run_pre_test_clear, run_vos_info_dump,
         run_qosmos_pretest, run_session_fetch_thread,
+        vos_dump_file_stem,
     )
     from core.report_generator import save_report, generate_html_report
 
@@ -256,7 +257,8 @@ def run_all(app_id: str, account_type: str, browser, script_dir: str,
             result["recipient"] = recipient
 
             # ── Post-TC: VOS info dump ────────────────────────────
-            run_vos_info_dump(f"{tc_label}_{activity_name}")
+            stem = vos_dump_file_stem(tc_label, activity_name)
+            run_vos_info_dump(stem)
 
             # ── Join session fetch thread ─────────────────────────
             if session_thread and session_thread.is_alive():
@@ -264,10 +266,14 @@ def run_all(app_id: str, account_type: str, browser, script_dir: str,
                 session_thread.join(timeout=30)
 
             # ── Session extensive verification (needs vos_dump) ───────────
-            activity_obj._finish_session_verification(result, tc_label)
+            activity_obj._finish_session_verification(
+                result, tc_label, dump_stem=stem
+            )
 
             # ── VOS stats counter verification ──────────────────────
-            activity_obj._finish_vos_stats_verification(result, tc_label)
+            activity_obj._finish_vos_stats_verification(
+                result, tc_label, dump_stem=stem
+            )
 
             result["status"] = "PASS" if not result["fail_reason"] else "FAIL"
 
